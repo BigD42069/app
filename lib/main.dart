@@ -38,6 +38,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_blue_plus/flutter_blue_plus.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+import 'package:path_provider/path_provider.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:timezone/data/latest.dart' as tz;
@@ -2006,10 +2007,109 @@ class _TransferViewState extends State<_TransferView> {
     // Erinnerung: startet frühestens nach 1 Minute und erzeugt Folgehinweise.
     await NotificationService.instance.scheduleIn(const Duration(minutes: 1));
     setState(() {
-      started = true;
+      started = false;
       done = false;
-      runId++;
     });
+
+    _showSnack(context, 'Dateiübertragung fehlgeschlagen: $reason');
+  }
+
+  @override
+  void dispose() {
+    _notifySub?.cancel();
+    _notifySub = null;
+    _notificationChain = Future.value();
+    unawaited(_closeFileSink(deleteFile: false));
+    super.dispose();
+  }
+
+  Future<void> _closeFileSink({required bool deleteFile}) async {
+    final sink = _fileSink;
+    final path = _savedFilePath;
+
+    _fileSink = null;
+    _transferActive = false;
+    _expectedFileBytes = 0;
+    _receivedFileBytes = 0;
+    _savedFilePath = null;
+
+    if (sink != null) {
+      try {
+        await sink.flush();
+      } catch (e, st) {
+        debugPrint('Flush fehlgeschlagen: $e');
+        debugPrint('$st');
+      }
+      try {
+        await sink.close();
+      } catch (e, st) {
+        debugPrint('Schließen des Dateistreams fehlgeschlagen: $e');
+        debugPrint('$st');
+      }
+    }
+
+    if (deleteFile && path != null) {
+      final file = File(path);
+      try {
+        if (await file.exists()) {
+          await file.delete();
+        }
+      } catch (e, st) {
+        debugPrint('Löschen der Datei $path fehlgeschlagen: $e');
+        debugPrint('$st');
+      }
+    }
+  }
+
+  String _formatBytes(int bytes) {
+    if (bytes < 1024) return '$bytes B';
+    if (bytes < 1024 * 1024) {
+      return '${(bytes / 1024).toStringAsFixed(1)} KB';
+    }
+    return '${(bytes / (1024 * 1024)).toStringAsFixed(2)} MB';
+  }
+
+  /// Startet den animierten Ablauf, nachdem der GET_FILE-Befehl erfolgreich an
+  /// das Gerät übermittelt wurde.
+  Future<void> start() async {
+    if (_requestInFlight) return;
+    if (_transferActive) {
+      if (mounted) {
+        _showSnack(context, 'Es läuft bereits eine Dateiübertragung.');
+      }
+      return;
+    }
+
+    setState(() => _requestInFlight = true);
+
+    bool success = false;
+    try {
+      final characteristic = await _ensureControlCharacteristic();
+      await _sendGetFileCommand(characteristic);
+
+      await transferStorage.setLastTransferNow();
+      // Erinnerung: startet frühestens nach 1 Minute und erzeugt Folgehinweise.
+      await NotificationService.instance
+          .scheduleIn(const Duration(minutes: 1));
+      success = true;
+    } catch (e) {
+      if (!mounted) return;
+      final msg = e is StateError ? e.message : e.toString();
+      _showSnack(context, 'Dateiabfrage fehlgeschlagen: $msg');
+    } finally {
+      if (!mounted) {
+        _requestInFlight = false;
+        return;
+      }
+      setState(() {
+        _requestInFlight = false;
+        if (success) {
+          started = true;
+          done = false;
+          runId++;
+        }
+      });
+    }
   }
 
   void _onFinished() {
