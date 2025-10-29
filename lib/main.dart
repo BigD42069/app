@@ -397,7 +397,13 @@ class NotificationService {
   }) async {
     await ensurePermissions();
 
-    final when = tz.TZDateTime.now(tz.local).add(const Duration(seconds: 10));
+    // Die Hauptbenachrichtigung soll frühestens nach einer Minute feuern, damit
+    // Nutzer:innen genug Zeit haben, ihre Übertragung anzustoßen. Kürzere
+    // Verzögerungen werden deshalb auf eine Minute angehoben.
+    final Duration effectiveDelay =
+        delay >= const Duration(minutes: 1) ? delay : const Duration(minutes: 1);
+
+    final tz.TZDateTime now = tz.TZDateTime.now(tz.local);
 
     const androidDetails = AndroidNotificationDetails(
       _channelId,
@@ -427,20 +433,40 @@ class NotificationService {
       mode = null; // ältere Plugin-Version -> kein Parameter setzen
     }
 
-    await _plugin.zonedSchedule(
-      id,
-      title,
-      body,
-      when,
-      NotificationDetails(
-        android: androidDetails, // wie gehabt (Importance.max/priority.high)
-        iOS: iosDetails, // wie oben
-      ),
-      androidAllowWhileIdle: true, // egal für iOS, aber ok
-      uiLocalNotificationDateInterpretation:
-          UILocalNotificationDateInterpretation.absoluteTime,
-      // kein 'matchDateTimeComponents', kein 'repeat' (sonst iOS >=60s)
+    Future<void> scheduleNotification({required int notificationId, required Duration offset}) async {
+      final tz.TZDateTime scheduledTime = now.add(offset);
+      await _plugin.zonedSchedule(
+        notificationId,
+        title,
+        body,
+        scheduledTime,
+        details,
+        androidAllowWhileIdle: true, // egal für iOS, aber ok
+        uiLocalNotificationDateInterpretation:
+            UILocalNotificationDateInterpretation.absoluteTime,
+        androidScheduleMode: mode,
+        // kein 'matchDateTimeComponents', kein 'repeat' (sonst iOS >=60s)
+      );
+    }
+
+    // Erinnerung bei ~50 % und ~90 % der Gesamtzeit. Die Verzögerungen werden
+    // nur genutzt, wenn sie strikt vor der Hauptbenachrichtigung liegen – so
+    // bleibt die Reihenfolge garantiert.
+    final Duration halfDelay = Duration(
+      milliseconds: (effectiveDelay.inMilliseconds * 0.5).round(),
     );
+    if (halfDelay > Duration.zero && halfDelay < effectiveDelay) {
+      await scheduleNotification(notificationId: id + 1, offset: halfDelay);
+    }
+
+    final Duration ninetyDelay = Duration(
+      milliseconds: (effectiveDelay.inMilliseconds * 0.9).round(),
+    );
+    if (ninetyDelay > Duration.zero && ninetyDelay < effectiveDelay) {
+      await scheduleNotification(notificationId: id + 2, offset: ninetyDelay);
+    }
+
+    await scheduleNotification(notificationId: id, offset: effectiveDelay);
   }
 
   @Deprecated('Nutze scheduleIn(Duration) statt scheduleReminderIn.')
@@ -1765,8 +1791,8 @@ class _TransferViewState extends State<_TransferView> {
 
   Future<void> start() async {
     await transferStorage.setLastTransferNow();
-    // Test: 10 Sekunden
-    await NotificationService.instance.scheduleIn(const Duration(seconds: 10));
+    // Erinnerung: startet frühestens nach 1 Minute und erzeugt Folgehinweise.
+    await NotificationService.instance.scheduleIn(const Duration(minutes: 1));
     setState(() {
       started = true;
       done = false;
