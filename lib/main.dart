@@ -45,6 +45,8 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:timezone/data/latest.dart' as tz;
 import 'package:timezone/timezone.dart' as tz;
 
+import 'ddd_parser.dart';
+
 /* =============================================================================
    Anwendungseinstieg & Bootstrap
    -----------------------------------------------------------------------------
@@ -1038,57 +1040,146 @@ class EmptyPage extends StatelessWidget {
 ==============================================================================*/
 
 /// Stellt vergangene Übertragungen als scrollbare Liste dar.
-class ListPage extends StatelessWidget {
+class ListPage extends StatefulWidget {
   const ListPage({super.key});
 
-  List<Map<String, String>> _generateFakeDates() {
-    final rng = Random();
-    final now = DateTime.now();
-    return List.generate(12, (i) {
-      final randomDays = rng.nextInt(1000);
-      final date = now.add(Duration(days: randomDays));
-      final dateStr =
-          "${date.day.toString().padLeft(2, '0')}.${date.month.toString().padLeft(2, '0')}.${date.year}";
-      return {
-        "title": dateStr,
-        "subtitle": "Beispieltext für $dateStr – lorem ipsum dolor sit amet.",
-      };
+  @override
+  State<ListPage> createState() => _ListPageState();
+}
+
+class _ListPageState extends State<ListPage> {
+  final DddFileRepository _repository = const DddFileRepository();
+  late Future<List<DddDayEntry>> _future;
+
+  @override
+  void initState() {
+    super.initState();
+    _future = _repository.loadDrivingDays();
+  }
+
+  Future<void> _refresh() async {
+    setState(() {
+      _future = _repository.loadDrivingDays();
     });
+    await _future;
   }
 
   @override
   Widget build(BuildContext context) {
-    final items = _generateFakeDates();
     final cs = Theme.of(context).colorScheme;
-    return ListView.builder(
-      padding: EdgeInsets.fromLTRB(
-        context.r.gutter,
-        80,
-        context.r.gutter,
-        context.r.bottomBarH + context.r.gutter,
-      ),
-      itemCount: items.length,
-      itemBuilder: (_, i) {
-        final item = items[i];
-        return Container(
-          margin: const EdgeInsets.only(bottom: 12),
-          decoration: BoxDecoration(
-            color: cs.onSurface.withOpacity(0.06),
-            borderRadius: BorderRadius.circular(18),
-            border: Border.all(color: cs.outlineVariant.withOpacity(0.5)),
-          ),
-          child: ListTile(
-            title: Text(
-              item["title"]!,
-              style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 17),
+    return FutureBuilder<List<DddDayEntry>>(
+      future: _future,
+      builder: (context, snapshot) {
+        if (snapshot.connectionState == ConnectionState.waiting &&
+            !snapshot.hasData) {
+          return const Center(child: CircularProgressIndicator());
+        }
+
+        if (snapshot.hasError) {
+          return RefreshIndicator(
+            onRefresh: _refresh,
+            child: _buildMessageList(
+              context,
+              icon: CupertinoIcons.exclamationmark_triangle,
+              title: 'Fehler beim Lesen der Datei',
+              subtitle:
+                  'Die übertragene DDD-Datei konnte nicht ausgewertet werden.',
             ),
-            subtitle: Text(
-              item["subtitle"]!,
-              style: TextStyle(color: cs.onSurface.withOpacity(0.8)),
+          );
+        }
+
+        final items = snapshot.data ?? const <DddDayEntry>[];
+        if (items.isEmpty) {
+          return RefreshIndicator(
+            onRefresh: _refresh,
+            child: _buildMessageList(
+              context,
+              icon: CupertinoIcons.doc_text,
+              title: 'Keine Fahrten gefunden',
+              subtitle:
+                  'Übertrage eine DDD-Datei mit Fahrten – Tage mit Bewegung werden hier angezeigt.',
             ),
+          );
+        }
+
+        return RefreshIndicator(
+          onRefresh: _refresh,
+          child: ListView.builder(
+            padding: EdgeInsets.fromLTRB(
+              context.r.gutter,
+              80,
+              context.r.gutter,
+              context.r.bottomBarH + context.r.gutter,
+            ),
+            itemCount: items.length,
+            itemBuilder: (_, i) {
+              final entry = items[i];
+              return Container(
+                margin: const EdgeInsets.only(bottom: 12),
+                decoration: BoxDecoration(
+                  color: cs.onSurface.withOpacity(0.06),
+                  borderRadius: BorderRadius.circular(18),
+                  border: Border.all(color: cs.outlineVariant.withOpacity(0.5)),
+                ),
+                child: ListTile(
+                  title: Text(
+                    entry.formattedDate,
+                    style: const TextStyle(
+                      fontWeight: FontWeight.w600,
+                      fontSize: 17,
+                    ),
+                  ),
+                  subtitle: Text(
+                    entry.buildSummary(),
+                    style: TextStyle(color: cs.onSurface.withOpacity(0.8)),
+                  ),
+                ),
+              );
+            },
           ),
         );
       },
+    );
+  }
+
+  Widget _buildMessageList(
+    BuildContext context, {
+    required IconData icon,
+    required String title,
+    required String subtitle,
+  }) {
+    final cs = Theme.of(context).colorScheme;
+    return ListView(
+      physics: const AlwaysScrollableScrollPhysics(),
+      padding: EdgeInsets.fromLTRB(
+        context.r.gutter,
+        120,
+        context.r.gutter,
+        context.r.bottomBarH + context.r.gutter,
+      ),
+      children: [
+        Icon(
+          icon,
+          size: 56,
+          color: cs.onSurface.withOpacity(0.7),
+        ),
+        const SizedBox(height: 16),
+        Text(
+          title,
+          textAlign: TextAlign.center,
+          style: TextStyle(
+            fontSize: 18,
+            fontWeight: FontWeight.w600,
+            color: cs.onSurface,
+          ),
+        ),
+        const SizedBox(height: 8),
+        Text(
+          subtitle,
+          textAlign: TextAlign.center,
+          style: TextStyle(color: cs.onSurface.withOpacity(0.75)),
+        ),
+      ],
     );
   }
 }
