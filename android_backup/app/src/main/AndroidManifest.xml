@@ -1,0 +1,39 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <!-- BLE ist Pflicht -->
+    <uses-feature android:name="android.hardware.bluetooth_le" android:required="true"/>
+
+    <!-- Android 12+ (API 31+) -->
+    <uses-permission
+        android:name="android.permission.BLUETOOTH_SCAN"
+        android:usesPermissionFlags="neverForLocation"
+        tools:targetApi="31" />
+    <uses-permission
+        android:name="android.permission.BLUETOOTH_CONNECT"
+        tools:targetApi="31" />
+    <!-- Falls ihr werbt: -->
+    <!-- <uses-permission android:name="android.permission.BLUETOOTH_ADVERTISE" tools:targetApi="31" /> -->
+
+    <!-- Pre-Android 12 (<= API 30) -->
+    <uses-permission android:name="android.permission.BLUETOOTH" />
+    <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" />
+    <!-- Für BLE-Scan ist vor Android 12 Standort nötig → FINE reicht; COARSE dann weglassen -->
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+
+    <!-- HINWEIS: den zweiten, optionalen uses-feature-Eintrag mit required="false" löschen -->
+    
+    <application
+        android:label="dateiexplorer_tachograph"
+        android:name="${applicationName}"
+        android:icon="@mipmap/ic_launcher">
+        <!-- … dein bestehender application-Inhalt unverändert … -->
+    </application>
+
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.PROCESS_TEXT"/>
+            <data android:mimeType="text/plain"/>
+        </intent>
+    </queries>
+</manifest>

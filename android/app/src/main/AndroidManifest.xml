@@ -1,0 +1,87 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <!-- ===== Bluetooth & Standort Berechtigungen ===== -->
+    <!-- Ab Android 12 (API 31+) muss Bluetooth SCAN/CONNECT explizit gesetzt sein -->
+    <uses-permission android:name="android.permission.BLUETOOTH" tools:remove="true" />
+    <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" tools:remove="true" />
+
+    <uses-permission android:name="android.permission.BLUETOOTH_SCAN" android:usesPermissionFlags="neverForLocation" />
+    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
+    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM"/>
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED"/>
+
+    <!-- Für Android 12+ (S/31): öffnet "Spezialzugriff > Alarme & Erinnerungen" -->
+    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
+    <!-- Für Android 13+ (T/33): normal permission für Wecker/Timer-ähnliche Apps -->
+    <uses-permission android:name="android.permission.USE_EXACT_ALARM" />
+    
+
+    <!-- Optional: für Geräteerkennung in der Nähe -->
+    <uses-permission
+        android:name="android.permission.NEARBY_WIFI_DEVICES"
+        android:required="false" />
+
+    <!-- Optional: falls du BLE im Hintergrund nutzen willst -->
+    <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION" />
+
+    <application
+        android:label="dateiexplorer_tachograph"
+        android:name="${applicationName}"
+        android:icon="@mipmap/ic_launcher">
+
+        <receiver
+    android:name="com.dexterous.flutterlocalnotifications.ScheduledNotificationReceiver"
+    android:exported="true"
+    tools:node="replace" />
+<receiver
+    android:name="com.dexterous.flutterlocalnotifications.MissedScheduleReceiver"
+    android:exported="true"
+    tools:node="replace" />
+<receiver
+    android:name="com.dexterous.flutterlocalnotifications.ScheduledNotificationBootReceiver"
+    android:exported="true"
+    tools:node="replace">
+  <intent-filter>
+    <action android:name="android.intent.action.BOOT_COMPLETED"/>
+    <action android:name="android.intent.action.MY_PACKAGE_REPLACED"/>
+  </intent-filter>
+</receiver>
+
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:launchMode="singleTop"
+            android:taskAffinity=""
+            android:theme="@style/LaunchTheme"
+            android:configChanges="orientation|keyboardHidden|keyboard|screenSize|smallestScreenSize|locale|layoutDirection|fontScale|screenLayout|density|uiMode"
+            android:hardwareAccelerated="true"
+            android:windowSoftInputMode="adjustResize">
+
+            <meta-data
+                android:name="io.flutter.embedding.android.NormalTheme"
+                android:resource="@style/NormalTheme" />
+
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <meta-data
+            android:name="flutterEmbedding"
+            android:value="2" />
+    </application>
+
+    <!-- ===== Sichtbarkeit für Textverarbeitungs-Intents ===== -->
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.PROCESS_TEXT" />
+            <data android:mimeType="text/plain" />
+        </intent>
+    </queries>
+
+</manifest>
