@@ -28,13 +28,14 @@
 
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io' show Platform;
+import 'dart:io' show Platform, File, IOSink;
 import 'dart:math';
 import 'dart:ui';
 
 import 'package:android_intent_plus/android_intent.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart'; // <- debugPrint
 import 'package:flutter/services.dart';
 import 'package:flutter_blue_plus/flutter_blue_plus.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
@@ -43,8 +44,6 @@ import 'package:permission_handler/permission_handler.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:timezone/data/latest.dart' as tz;
 import 'package:timezone/timezone.dart' as tz;
-
-import 'tachograph_repository.dart';
 
 /* =============================================================================
    Anwendungseinstieg & Bootstrap
@@ -72,10 +71,7 @@ Future<void> main() async {
   //    wird die definierte Fallback-Palette verwendet.
   final themeStorage = ThemeStorage();
   final initialPalette = await themeStorage.loadPalette(
-    fallback: AppPalette(
-      accent: const Color(0xFFD4AF37),
-      mode: ThemeMode.dark,
-    ),
+    fallback: AppPalette(accent: const Color(0xFFD4AF37), mode: ThemeMode.dark),
   );
 
   // 3) ThemeController erstellen und über einen Provider für alle Widgets
@@ -84,10 +80,7 @@ Future<void> main() async {
   final themeController = ThemeController(initialPalette, themeStorage);
 
   runApp(
-    ThemeProvider(
-      controller: themeController,
-      child: const KalenderApp(),
-    ),
+    ThemeProvider(controller: themeController, child: const KalenderApp()),
   );
 }
 
@@ -393,6 +386,8 @@ class NotificationService {
   }
 
   /// Geplante Benachrichtigung (beachtet Exact Alarms)
+  /// Geplante Benachrichtigung (beachtet Exact Alarms)
+  /// Geplante Benachrichtigung (beachtet Exact Alarms)
   Future<void> scheduleIn(
     Duration delay, {
     int id = _defaultId,
@@ -401,11 +396,10 @@ class NotificationService {
   }) async {
     await ensurePermissions();
 
-    // Die Hauptbenachrichtigung soll frühestens nach einer Minute feuern, damit
-    // Nutzer:innen genug Zeit haben, ihre Übertragung anzustoßen. Kürzere
-    // Verzögerungen werden deshalb auf eine Minute angehoben.
-    final Duration effectiveDelay =
-        delay >= const Duration(minutes: 1) ? delay : const Duration(minutes: 1);
+    // Minimum 1 Minute
+    final Duration effectiveDelay = delay >= const Duration(minutes: 1)
+        ? delay
+        : const Duration(minutes: 1);
 
     final tz.TZDateTime now = tz.TZDateTime.now(tz.local);
 
@@ -421,7 +415,6 @@ class NotificationService {
       presentAlert: true,
       presentBadge: true,
       presentSound: true,
-      // um Focus/Nicht stören eher zu durchbrechen:
       interruptionLevel: InterruptionLevel.timeSensitive,
     );
     const details = NotificationDetails(
@@ -429,15 +422,17 @@ class NotificationService {
       iOS: iosDetails,
     );
 
-    // (a) falls vom Plugin unterstützt: EXACT + while idle
     AndroidScheduleMode? mode;
     try {
       mode = AndroidScheduleMode.exactAllowWhileIdle;
     } catch (_) {
-      mode = null; // ältere Plugin-Version -> kein Parameter setzen
+      mode = null;
     }
 
-    Future<void> scheduleNotification({required int notificationId, required Duration offset}) async {
+    Future<void> scheduleNotification({
+      required int notificationId,
+      required Duration offset,
+    }) async {
       final tz.TZDateTime scheduledTime = now.add(offset);
       await _plugin.zonedSchedule(
         notificationId,
@@ -445,27 +440,15 @@ class NotificationService {
         body,
         scheduledTime,
         details,
-        androidAllowWhileIdle: true, // egal für iOS, aber ok
+        androidAllowWhileIdle: true,
         uiLocalNotificationDateInterpretation:
             UILocalNotificationDateInterpretation.absoluteTime,
         androidScheduleMode: mode,
-        // kein 'matchDateTimeComponents', kein 'repeat' (sonst iOS >=60s)
       );
     }
 
-    // Erinnerung bei ~50 % und ~90 % der Gesamtzeit. Die Verzögerungen werden
-    // nur genutzt, wenn sie strikt vor der Hauptbenachrichtigung liegen – so
-    // bleibt die Reihenfolge garantiert.
     final Duration halfDelay = Duration(
       milliseconds: (effectiveDelay.inMilliseconds * 0.5).round(),
-    );
-    if (halfDelay > Duration.zero && halfDelay < effectiveDelay) {
-      await scheduleNotification(notificationId: id + 1, offset: halfDelay);
-    }
-
-    final Duration ninetyDelay = Duration(
-      milliseconds: (effectiveDelay.inMilliseconds * 0.9).round(),
-    );
     );
     if (halfDelay > Duration.zero && halfDelay < effectiveDelay) {
       await scheduleNotification(notificationId: id + 1, offset: halfDelay);
@@ -511,6 +494,7 @@ const String kMyNamePrefix = 'TACHO-';
 const String kMyControlCharUuid = '12345678-1234-5678-1234-56789abcdef1';
 
 /// Dateiname, der beim initialen Abruf vom Gerät angefordert wird.
+const String kTransferFileName = '/storage/ddd.DDD';
 
 /// Prüft, ob ein ScanResult zu unserem Gerät gehört.
 bool isMyDevice(ScanResult r) {
@@ -526,7 +510,8 @@ bool isMyDevice(ScanResult r) {
       ? r.advertisementData.advName
       : r.device.platformName;
 
-  return hasService && (kMyNamePrefix.isEmpty || name.startsWith(kMyNamePrefix));
+  return hasService &&
+      (kMyNamePrefix.isEmpty || name.startsWith(kMyNamePrefix));
 }
 
 /// Fordert alle benötigten BLE-Berechtigungen an (Android-spezifisch).
@@ -567,9 +552,9 @@ Future<bool> ensureBlePermissions() async {
 
 class R {
   R(this.context)
-      : size = MediaQuery.of(context).size,
-        pad = MediaQuery.of(context).padding,
-        textScale = MediaQuery.textScalerOf(context);
+    : size = MediaQuery.of(context).size,
+      pad = MediaQuery.of(context).padding,
+      textScale = MediaQuery.textScalerOf(context);
 
   /// Referenz auf den aufrufenden BuildContext, falls später weitere
   /// MediaQuery-Werte benötigt werden.
@@ -1053,172 +1038,55 @@ class EmptyPage extends StatelessWidget {
 ==============================================================================*/
 
 /// Stellt vergangene Übertragungen als scrollbare Liste dar.
-class ListPage extends StatefulWidget {
+class ListPage extends StatelessWidget {
   const ListPage({super.key});
 
-  @override
-  State<ListPage> createState() => _ListPageState();
-}
-
-class _ListPageState extends State<ListPage> {
-  late Future<List<TachographDay>> _future;
-
-  @override
-  void initState() {
-    super.initState();
-    _future = tachographRepository.loadDays();
-  }
-
-  Future<void> _reload() async {
-    setState(() {
-      _future = tachographRepository.loadDays();
+  List<Map<String, String>> _generateFakeDates() {
+    final rng = Random();
+    final now = DateTime.now();
+    return List.generate(12, (i) {
+      final randomDays = rng.nextInt(1000);
+      final date = now.add(Duration(days: randomDays));
+      final dateStr =
+          "${date.day.toString().padLeft(2, '0')}.${date.month.toString().padLeft(2, '0')}.${date.year}";
+      return {
+        "title": dateStr,
+        "subtitle": "Beispieltext für $dateStr – lorem ipsum dolor sit amet.",
+      };
     });
-    await _future;
-  }
-
-  String _formatDate(DateTime date) {
-    final d = date.toLocal();
-    final day = d.day.toString().padLeft(2, '0');
-    final month = d.month.toString().padLeft(2, '0');
-    final year = d.year.toString();
-    return '$day.$month.$year';
-  }
-
-  String _formatDistance(TachographDay day) {
-    final km = day.distanceKm;
-    if (km < 1) {
-      return 'Keine Fahrstrecke erfasst';
-    }
-    return '$km km gefahren';
   }
 
   @override
   Widget build(BuildContext context) {
+    final items = _generateFakeDates();
     final cs = Theme.of(context).colorScheme;
-
-    Widget buildList(List<TachographDay> days) {
-      if (days.isEmpty) {
-        return ListView(
-          physics: const AlwaysScrollableScrollPhysics(
-            parent: BouncingScrollPhysics(),
+    return ListView.builder(
+      padding: EdgeInsets.fromLTRB(
+        context.r.gutter,
+        80,
+        context.r.gutter,
+        context.r.bottomBarH + context.r.gutter,
+      ),
+      itemCount: items.length,
+      itemBuilder: (_, i) {
+        final item = items[i];
+        return Container(
+          margin: const EdgeInsets.only(bottom: 12),
+          decoration: BoxDecoration(
+            color: cs.onSurface.withOpacity(0.06),
+            borderRadius: BorderRadius.circular(18),
+            border: Border.all(color: cs.outlineVariant.withOpacity(0.5)),
           ),
-          padding: EdgeInsets.fromLTRB(
-            context.r.gutter,
-            80,
-            context.r.gutter,
-            context.r.bottomBarH + context.r.gutter,
+          child: ListTile(
+            title: Text(
+              item["title"]!,
+              style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 17),
+            ),
+            subtitle: Text(
+              item["subtitle"]!,
+              style: TextStyle(color: cs.onSurface.withOpacity(0.8)),
+            ),
           ),
-          children: [
-            Container(
-              padding: const EdgeInsets.all(24),
-              decoration: BoxDecoration(
-                color: cs.onSurface.withOpacity(0.04),
-                borderRadius: BorderRadius.circular(18),
-                border: Border.all(color: cs.outlineVariant.withOpacity(0.5)),
-              ),
-              child: Text(
-                'Noch keine Fahrten vorhanden. Übertrage eine DDD-Datei, '
-                'um hier Tage mit Fahrzeugbewegungen zu sehen.',
-                style: TextStyle(color: cs.onSurface.withOpacity(0.85)),
-              ),
-            ),
-          ],
-        );
-      }
-
-      return ListView.builder(
-        physics: const AlwaysScrollableScrollPhysics(
-          parent: BouncingScrollPhysics(),
-        ),
-        padding: EdgeInsets.fromLTRB(
-          context.r.gutter,
-          80,
-          context.r.gutter,
-          context.r.bottomBarH + context.r.gutter,
-        ),
-        itemCount: days.length,
-        itemBuilder: (_, i) {
-          final day = days[i];
-          return Container(
-            margin: const EdgeInsets.only(bottom: 12),
-            decoration: BoxDecoration(
-              color: cs.onSurface.withOpacity(0.06),
-              borderRadius: BorderRadius.circular(18),
-              border: Border.all(color: cs.outlineVariant.withOpacity(0.5)),
-            ),
-            child: ListTile(
-              onTap: () {
-                _showSnack(
-                  context,
-                  'Details zu ${_formatDate(day.date)} folgen in einem späteren Schritt.',
-                );
-              },
-              title: Text(
-                _formatDate(day.date),
-                style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 17),
-              ),
-              subtitle: Text(
-                _formatDistance(day),
-                style: TextStyle(color: cs.onSurface.withOpacity(0.8)),
-              ),
-            ),
-          );
-        },
-      );
-    }
-
-    return FutureBuilder<List<TachographDay>>(
-      future: _future,
-      builder: (context, snapshot) {
-        if (snapshot.connectionState == ConnectionState.waiting) {
-          return Center(
-            child: Padding(
-              padding: EdgeInsets.only(top: 80),
-              child: CupertinoActivityIndicator(
-                color: cs.secondary,
-              ),
-            ),
-          );
-        }
-
-        if (snapshot.hasError) {
-          return RefreshIndicator(
-            color: cs.secondary,
-            onRefresh: _reload,
-            child: ListView(
-              physics: const AlwaysScrollableScrollPhysics(
-                parent: BouncingScrollPhysics(),
-              ),
-              padding: EdgeInsets.fromLTRB(
-                context.r.gutter,
-                80,
-                context.r.gutter,
-                context.r.bottomBarH + context.r.gutter,
-              ),
-              children: [
-                Container(
-                  padding: const EdgeInsets.all(24),
-                  decoration: BoxDecoration(
-                    color: cs.errorContainer.withOpacity(0.25),
-                    borderRadius: BorderRadius.circular(18),
-                    border: Border.all(color: cs.error.withOpacity(0.4)),
-                  ),
-                  child: Text(
-                    'DDD-Datei konnte nicht gelesen werden. '
-                    'Ziehe zum Aktualisieren, um es erneut zu versuchen.',
-                    style: TextStyle(color: cs.onErrorContainer),
-                  ),
-                ),
-              ],
-            ),
-          );
-        }
-
-        final days = snapshot.data ?? const [];
-        return RefreshIndicator(
-          color: cs.secondary,
-          onRefresh: _reload,
-          child: buildList(days),
         );
       },
     );
@@ -2028,26 +1896,69 @@ class _TransferView extends StatefulWidget {
 
 /// Kümmert sich um Animationen, State und Übergänge für den Transferbereich.
 class _TransferViewState extends State<_TransferView> {
-  bool started = false;
-  bool done = false;
-  int runId = 0;
-  bool _requestInFlight = false;
-  BluetoothCharacteristic? _controlCharacteristic;
+  // UI-State
+  bool started = false; // zeigt den Ring
+  bool done = false; // Ring hat "Fertig"
+  int runId = 0; // damit der Ring neu startet
+  bool _requestInFlight = false; // Button/Spinner-Disable
 
-  /// Sucht (einmalig) die Kontroll-Characteristic heraus, über die Kommandos
-  /// zum Gerät geschickt werden. Ergebnisse werden gecached.
-  Future<BluetoothCharacteristic> _ensureControlCharacteristic() async {
-    if (_controlCharacteristic != null) return _controlCharacteristic!;
+  // BLE
+  BluetoothCharacteristic? _ctrlChar;
+  StreamSubscription<List<int>>? _notifySub;
+
+  // Dateitransfer-State
+  bool _transferActive = false;
+  IOSink? _fileSink;
+  String? _savedFilePath;
+  int _expectedFileBytes = 0;
+  int _receivedFileBytes = 0;
+
+  @override
+  void dispose() {
+    _notifySub?.cancel();
+    _notifySub = null;
+    _closeFileSink(deleteFile: false);
+    super.dispose();
+  }
+
+  // --- Hilfsfunktionen: Verbindung, Discovery, Notify-Setup -----------------
+
+  /// Stelle sicher, dass wir wirklich connected sind.
+  /// Wenn iOS die Verbindung weggeschoben hat, verbinden wir neu und warten.
+  Future<void> _ensureConnected() async {
+    var state = await widget.device.connectionState.first;
+
+    if (state != BluetoothConnectionState.connected) {
+      try {
+        await widget.device.connect(timeout: const Duration(seconds: 8));
+      } catch (_) {
+        // "already connected" usw. ignorieren.
+      }
+
+      // jetzt BLOCKEN bis der Adapter sagt "connected"
+      await widget.device.connectionState
+          .where((s) => s == BluetoothConnectionState.connected)
+          .first;
+    }
+  }
+
+  /// Sucht unseren Service + unsere eine Characteristic (write+notify).
+  /// cached das Ergebnis in _ctrlChar.
+  Future<void> _prepareCtrlChar() async {
+    if (_ctrlChar != null) return;
+
+    await _ensureConnected();
 
     final services = await widget.device.discoverServices();
-    final targetService = services.firstWhere(
-      (s) =>
-          s.uuid.toString().toLowerCase() == kMyServiceUuid.toLowerCase(),
-      orElse: () =>
-          throw StateError('Service $kMyServiceUuid nicht gefunden.'),
+
+    // Service 12345678-1234-5678-1234-56789abcdef0
+    final service = services.firstWhere(
+      (s) => s.uuid.toString().toLowerCase() == kMyServiceUuid.toLowerCase(),
+      orElse: () => throw StateError('Service $kMyServiceUuid nicht gefunden.'),
     );
 
-    final characteristic = targetService.characteristics.firstWhere(
+    // Characteristic 12345678-1234-5678-1234-56789abcdef1
+    final characteristic = service.characteristics.firstWhere(
       (c) =>
           c.uuid.toString().toLowerCase() == kMyControlCharUuid.toLowerCase(),
       orElse: () => throw StateError(
@@ -2055,183 +1966,275 @@ class _TransferViewState extends State<_TransferView> {
       ),
     );
 
-    _controlCharacteristic = characteristic;
-    return characteristic;
+    _ctrlChar = characteristic;
   }
 
-  /// Sendet das GET_FILE-Kommando an die Steuer-Characteristic. Nutzt – wenn
-  /// vorhanden – einen Write mit Response, fällt sonst auf Write Without
-  /// Response zurück. Falls die Characteristic keine Schreibrechte hat, wird
-  /// eine StateError geworfen.
-  Future<void> _sendGetFileCommand(
-    BluetoothCharacteristic characteristic,
-  ) async {
-    final props = characteristic.properties;
-    final bool supportsWriteWithResponse = props.write;
-    final bool supportsWriteWithoutResponse = props.writeWithoutResponse;
+  /// Abonniert Notifications auf der Control-Characteristic.
+  /// Das ist entscheidend, weil dein ESP32 erst DANN ctrl_notify_enabled=true setzt
+  /// und anfängt BEGIN / Bytes / END zu pushen.
+  Future<void> _ensureNotifyListener() async {
+    await _prepareCtrlChar();
+    final c = _ctrlChar!;
+    if (_notifySub != null) return; // schon dran
 
-    if (!supportsWriteWithResponse && !supportsWriteWithoutResponse) {
+    // nur wenn notify/indicate erlaubt ist
+    if (c.properties.notify || c.properties.indicate) {
+      _notifySub = c.onValueReceived.listen((data) {
+        _onDataFromDevice(data);
+      });
+
+      // automatisch kündigen, falls BLE-Verbindung abreißt
+      widget.device.cancelWhenDisconnected(_notifySub!);
+
+      // CCC auf dem ESP setzen -> ctrl_notify_enabled = true
+      await c.setNotifyValue(true);
+    } else {
       throw StateError(
-        'Characteristic ${characteristic.uuid} unterstützt kein Schreiben.',
+        'Characteristic ${c.uuid} unterstützt keine Notifications.',
       );
     }
-
-    final payload = utf8.encode('GET_FILE $kTransferFileName');
-    final bool useWithoutResponse =
-        !supportsWriteWithResponse && supportsWriteWithoutResponse;
-
-    await characteristic.write(
-      payload,
-      withoutResponse: useWithoutResponse,
-    );
   }
 
-  /// Startet den animierten Ablauf, nachdem der GET_FILE-Befehl erfolgreich an
-  /// das Gerät übermittelt wurde.
-  Future<void> start() async {
-    if (_requestInFlight) return;
+  // --- Datei-Empfang --------------------------------------------------------
 
-    setState(() => _requestInFlight = true);
+  /// Wir bekommen vom ESP32 zwei Arten von Paketen über dieselbe Characteristic:
+  /// 1. JSON-Text (BEGIN/END/ERROR/DONE/...)
+  /// 2. rohe Binär-Bytes (Dateiinhalt)
+  ///
+  /// Heuristik:
+  ///   - beginnt das Paket mit '{' → JSON
+  ///   - sonst → Binärchunk
+  Future<void> _onDataFromDevice(List<int> bytes) async {
+    if (bytes.isEmpty) return;
 
-    bool success = false;
-    try {
-      final characteristic = await _ensureControlCharacteristic();
-      await _sendGetFileCommand(characteristic);
-
-      await transferStorage.setLastTransferNow();
-      // Erinnerung: startet frühestens nach 1 Minute und erzeugt Folgehinweise.
-      await NotificationService.instance
-          .scheduleIn(const Duration(minutes: 1));
-      success = true;
-    } catch (e) {
-      if (!mounted) return;
-      final msg = e is StateError ? e.message : e.toString();
-      _showSnack(context, 'Dateiabfrage fehlgeschlagen: $msg');
-    } finally {
-      if (!mounted) {
-        _requestInFlight = false;
-        return;
+    final first = bytes.first;
+    if (first == 0x7B /* '{' */ ) {
+      final msg = utf8.decode(bytes, allowMalformed: true);
+      _handleJsonMessage(msg);
+    } else {
+      // Binärdaten -> in die Datei schreiben
+      if (_transferActive && _fileSink != null) {
+        _fileSink!.add(bytes);
+        _receivedFileBytes += bytes.length;
+      } else {
+        debugPrint(
+          'WARN: Binärdaten empfangen, aber kein aktiver Transfer. '
+          '(${bytes.length} bytes verworfen)',
+        );
       }
-      setState(() {
-        _requestInFlight = false;
-        if (success) {
-          started = true;
-          done = false;
-          runId++;
-        }
-      });
     }
-    await transferStorage.setLastTransferNow();
-    // Erinnerung: startet frühestens nach 1 Minute und erzeugt Folgehinweise.
-    await NotificationService.instance.scheduleIn(const Duration(minutes: 1));
+  }
+
+  /// Verarbeitet BEGIN / END / ERROR usw.
+  void _handleJsonMessage(String msg) {
+    Map<String, dynamic>? obj;
+    try {
+      obj = jsonDecode(msg) as Map<String, dynamic>;
+    } catch (e) {
+      debugPrint('JSON parse fail: $e / "$msg"');
+      return;
+    }
+
+    final type = obj['type']?.toString() ?? '';
+
+    if (type == 'BEGIN') {
+      final size = (obj['size'] as num?)?.toInt() ?? 0;
+      _startNewFileSink(size);
+      return;
+    }
+
+    if (type == 'END' || type == 'DONE') {
+      _finishTransfer(success: true);
+      return;
+    }
+
+    if (type == 'ERROR') {
+      final stage = obj['stage']?.toString() ?? '';
+      final m = obj['msg']?.toString() ?? '';
+      _showSnack(context, 'Gerät meldet Fehler: $stage $m');
+      _finishTransfer(success: false);
+      return;
+    }
+
+    if (type == 'CANCELLED') {
+      _showSnack(context, 'Übertragung abgebrochen');
+      _finishTransfer(success: false);
+      return;
+    }
+
+    if (type == 'INFO' || type == 'META') {
+      // rein informativ -> loggen
+      debugPrint('INFO/META vom Gerät: $msg');
+      return;
+    }
+  }
+
+  /// BEGIN kam rein -> neue Ausgabedatei anlegen + Fortschrittsring starten.
+  Future<void> _startNewFileSink(int expectedBytes) async {
+    final dir = await getApplicationDocumentsDirectory();
+    final ts = DateTime.now().millisecondsSinceEpoch;
+    final path = '${dir.path}/tachograph_$ts.ddd';
+
+    final file = File(path);
+    final sink = file.openWrite();
+
+    _expectedFileBytes = expectedBytes;
+    _receivedFileBytes = 0;
+    _savedFilePath = path;
+    _fileSink = sink;
+    _transferActive = true;
+
+    if (!mounted) return;
     setState(() {
-      started = false;
+      started = true; // Ring sichtbar
       done = false;
+      runId++;
     });
 
-    _showSnack(context, 'Dateiübertragung fehlgeschlagen: $reason');
+    debugPrint('Transfer START: -> $path ($expectedBytes bytes erwartet)');
   }
 
-  @override
-  void dispose() {
-    _notifySub?.cancel();
-    _notifySub = null;
-    _notificationChain = Future.value();
-    unawaited(_closeFileSink(deleteFile: false));
-    super.dispose();
+  /// END/DONE/ERROR kam rein oder wir räumen auf.
+  Future<void> _finishTransfer({required bool success}) async {
+    final sink = _fileSink;
+    final path = _savedFilePath;
+
+    _fileSink = null;
+    _transferActive = false;
+
+    if (sink != null) {
+      try {
+        await sink.flush();
+      } catch (_) {}
+      try {
+        await sink.close();
+      } catch (_) {}
+    }
+
+    if (!mounted) return;
+    setState(() {
+      done = success;
+      // Ring bleibt sichtbar und zeigt ggf. "Fertig"
+      // Du kannst hier auch started=false setzen, wenn du den Ring sofort
+      // ausblenden willst.
+    });
+
+    if (success && path != null) {
+      _showSnack(context, 'Datei gespeichert: $path ($_receivedFileBytes B)');
+    } else if (!success && path != null) {
+      // optional: angefangene Datei wegwerfen
+      try {
+        final f = File(path);
+        if (await f.exists()) {
+          await f.delete();
+        }
+      } catch (_) {}
+    }
   }
 
+  /// Falls wir manuell aufräumen wollen (z.B. dispose()):
   Future<void> _closeFileSink({required bool deleteFile}) async {
     final sink = _fileSink;
     final path = _savedFilePath;
 
     _fileSink = null;
     _transferActive = false;
-    _expectedFileBytes = 0;
-    _receivedFileBytes = 0;
-    _savedFilePath = null;
 
     if (sink != null) {
       try {
         await sink.flush();
-      } catch (e, st) {
-        debugPrint('Flush fehlgeschlagen: $e');
-        debugPrint('$st');
-      }
+      } catch (_) {}
       try {
         await sink.close();
-      } catch (e, st) {
-        debugPrint('Schließen des Dateistreams fehlgeschlagen: $e');
-        debugPrint('$st');
-      }
+      } catch (_) {}
     }
 
     if (deleteFile && path != null) {
-      final file = File(path);
       try {
-        if (await file.exists()) {
-          await file.delete();
+        final f = File(path);
+        if (await f.exists()) {
+          await f.delete();
         }
-      } catch (e, st) {
-        debugPrint('Löschen der Datei $path fehlgeschlagen: $e');
-        debugPrint('$st');
+      } catch (e) {
+        debugPrint('Fehler beim Löschen $path: $e');
       }
     }
+
+    _expectedFileBytes = 0;
+    _receivedFileBytes = 0;
+    _savedFilePath = null;
   }
 
-  String _formatBytes(int bytes) {
-    if (bytes < 1024) return '$bytes B';
-    if (bytes < 1024 * 1024) {
-      return '${(bytes / 1024).toStringAsFixed(1)} KB';
-    }
-    return '${(bytes / (1024 * 1024)).toStringAsFixed(2)} MB';
-  }
+  // --- Button-Handler: Dateiübertragung starten ----------------------------
 
-  /// Startet den animierten Ablauf, nachdem der GET_FILE-Befehl erfolgreich an
-  /// das Gerät übermittelt wurde.
+  /// Wird von "Dateiübertragung starten" aufgerufen.
+  ///
+  /// Ablauf:
+  /// 1. sicherstellen, dass wir verbunden sind
+  /// 2. Characteristic finden
+  /// 3. Notifications aktivieren (damit ESP losschicken darf)
+  /// 4. Befehl `GET_FILE /storage/ddd.ddd` hinschreiben
+  /// 5. Erinnerungs-Notification für später planen
   Future<void> start() async {
     if (_requestInFlight) return;
-    if (_transferActive) {
-      if (mounted) {
-        _showSnack(context, 'Es läuft bereits eine Dateiübertragung.');
-      }
-      return;
-    }
 
     setState(() => _requestInFlight = true);
 
-    bool success = false;
     try {
-      final characteristic = await _ensureControlCharacteristic();
-      await _sendGetFileCommand(characteristic);
+      // 1+2
+      await _prepareCtrlChar();
 
-      await transferStorage.setLastTransferNow();
-      // Erinnerung: startet frühestens nach 1 Minute und erzeugt Folgehinweise.
-      await NotificationService.instance
-          .scheduleIn(const Duration(minutes: 1));
-      success = true;
-    } catch (e) {
-      if (!mounted) return;
-      final msg = e is StateError ? e.message : e.toString();
-      _showSnack(context, 'Dateiabfrage fehlgeschlagen: $msg');
-    } finally {
-      if (!mounted) {
-        _requestInFlight = false;
-        return;
+      // 3
+      await _ensureNotifyListener();
+
+      // 4 -> Befehl an ESP
+      // Wichtig: Pfad MUSS so existieren wie auf dem ESP (SPIFFS unter "/storage")
+      final cmd = 'GET_FILE $kTransferFileName';
+      final data = utf8.encode(cmd);
+
+      final props = _ctrlChar!.properties;
+      final canWriteWithRsp = props.write;
+      final canWriteNoRsp = props.writeWithoutResponse;
+
+      if (!canWriteWithRsp && !canWriteNoRsp) {
+        throw StateError(
+          'Characteristic ${_ctrlChar!.uuid} ist nicht schreibbar.',
+        );
       }
+
+      await _ctrlChar!.write(
+        data,
+        withoutResponse: !canWriteWithRsp && canWriteNoRsp,
+      );
+
+      // 5: lokale Erinnerung für "denk dran, wieder übertragen"
+      await transferStorage.setLastTransferNow();
+      await NotificationService.instance.scheduleIn(const Duration(minutes: 1));
+
+      // UI-Update: wir zeigen Spinner-Text "Dateiabfrage wird gesendet…"
+      if (!mounted) return;
       setState(() {
-        _requestInFlight = false;
-        if (success) {
-          started = true;
-          done = false;
-          runId++;
-        }
+        // started wird NICHT hier gesetzt.
+        // started geht erst auf true, wenn wir BEGIN empfangen haben.
       });
+    } catch (e) {
+      if (mounted) {
+        _showSnack(context, 'Dateiabfrage fehlgeschlagen: $e');
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _requestInFlight = false;
+        });
+      }
     }
   }
 
-  void _onFinished() {
-    setState(() => done = true);
+  // --- UI Rendering ---------------------------------------------------------
+
+  void _onFinishedRing() {
+    // Wird vom Ring nach der Animation gerufen.
+    // Wir lassen done einfach stehen.
   }
 
   @override
@@ -2243,12 +2246,9 @@ class _TransferViewState extends State<_TransferView> {
         final double w = constraints.maxWidth;
         final double h = constraints.maxHeight;
 
-        // Seitenränder wie überall
         const double padH = 20.0;
         const double padTop = 80.0;
 
-        // Ringgröße nutzt Breite und Höhe (prozentual & geclamped), damit
-        // auf 15 Pro/kleinen Geräten nie abgeschnitten wird
         final double ringByWidth = (w - padH * 2).clamp(160.0, 360.0);
         final double ringByHeight = (h * 0.55).clamp(160.0, 320.0);
         final double ringSize = ringByWidth < ringByHeight
@@ -2259,7 +2259,7 @@ class _TransferViewState extends State<_TransferView> {
           key: const ValueKey('transfer'),
           padding: const EdgeInsets.fromLTRB(padH, padTop, padH, 140),
           children: [
-            // Zurück-Pill (themed)
+            // Zurück
             Align(
               alignment: Alignment.centerLeft,
               child: CupertinoButton(
@@ -2314,11 +2314,10 @@ class _TransferViewState extends State<_TransferView> {
             Container(height: 1, color: cs.outlineVariant),
             const SizedBox(height: 14),
 
-            // Textblock volle Breite + BT-Icon rechts
             Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                // Text füllt verbleibende Breite
+                // Text
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
@@ -2352,7 +2351,7 @@ class _TransferViewState extends State<_TransferView> {
 
             const SizedBox(height: 14),
 
-            // Start-Button unter dem Text, rechtsbündig
+            // Start-Button
             Row(
               children: [
                 const Spacer(),
@@ -2403,11 +2402,27 @@ class _TransferViewState extends State<_TransferView> {
                 child: _ProgressRing(
                   key: ValueKey(runId),
                   duration: const Duration(seconds: 4),
-                  onFinished: _onFinished,
-                  size: ringSize, // <<< dynamisch – verhindert Abschneiden
+                  onFinished: _onFinishedRing,
+                  size: ringSize,
                 ),
               ),
             if (started) const SizedBox(height: 8),
+
+            if (_transferActive)
+              Text(
+                'Empfange Daten... '
+                '$_receivedFileBytes / $_expectedFileBytes Bytes',
+                style: TextStyle(color: cs.onSurface.withOpacity(0.8)),
+              ),
+
+            if (!_transferActive && done)
+              Text(
+                'Übertragung abgeschlossen.',
+                style: TextStyle(
+                  color: cs.onSurface,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
           ],
         );
       },
