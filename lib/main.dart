@@ -27,6 +27,7 @@
  * ---------------------------------------------------------------------------*/
 
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io' show Platform;
 import 'dart:math';
 import 'dart:ui';
@@ -462,6 +463,14 @@ class NotificationService {
     final Duration ninetyDelay = Duration(
       milliseconds: (effectiveDelay.inMilliseconds * 0.9).round(),
     );
+    );
+    if (halfDelay > Duration.zero && halfDelay < effectiveDelay) {
+      await scheduleNotification(notificationId: id + 1, offset: halfDelay);
+    }
+
+    final Duration ninetyDelay = Duration(
+      milliseconds: (effectiveDelay.inMilliseconds * 0.9).round(),
+    );
     if (ninetyDelay > Duration.zero && ninetyDelay < effectiveDelay) {
       await scheduleNotification(notificationId: id + 2, offset: ninetyDelay);
     }
@@ -494,6 +503,12 @@ const String kMyServiceUuid = '12345678-1234-5678-1234-56789abcdef0';
 
 /// Optionales Namenspräfix, um die Trefferliste weiter einzugrenzen.
 const String kMyNamePrefix = 'TACHO-';
+
+/// UUID der Kontroll-Characteristic, über die Kommandos (GET_FILE etc.) laufen.
+const String kMyControlCharUuid = '12345678-1234-5678-1234-56789abcdef1';
+
+/// Dateiname, der beim initialen Abruf vom Gerät angefordert wird.
+const String kTransferFileName = 'ddd.ddd';
 
 /// Prüft, ob ein ScanResult zu unserem Gerät gehört.
 bool isMyDevice(ScanResult r) {
@@ -1114,7 +1129,8 @@ class _PlusPageState extends State<PlusPage> {
   PlusMode mode = PlusMode.intro;
 
   DateTime? lastScanAt;
-  String? connectedDevice;
+  String? connectedDeviceName;
+  BluetoothDevice? _connectedDevice;
 
   // Bluetooth / Scan-State
   bool scanning = false;
@@ -1227,14 +1243,19 @@ class _PlusPageState extends State<PlusPage> {
 
   void _backToIntro() {
     _stopScan();
-    setState(() => mode = PlusMode.intro);
+    setState(() {
+      mode = PlusMode.intro;
+      _connectedDevice = null;
+      connectedDeviceName = null;
+    });
   }
 
   Future<void> _connectTo(ScanResult r) async {
     final dev = r.device;
     _stopScan();
     setState(() {
-      connectedDevice = _bestName(r);
+      connectedDeviceName = _bestName(r);
+      _connectedDevice = dev;
       mode = PlusMode.transfer;
     });
 
@@ -1249,7 +1270,8 @@ class _PlusPageState extends State<PlusPage> {
       // zurück in die Ergebnisliste, damit der User neu probieren kann
       setState(() {
         mode = PlusMode.results;
-        connectedDevice = null;
+        connectedDeviceName = null;
+        _connectedDevice = null;
       });
     }
   }
@@ -1278,14 +1300,32 @@ class _PlusPageState extends State<PlusPage> {
         );
         break;
       case PlusMode.transfer:
-        child = _TransferView(
-          deviceName: connectedDevice ?? 'Gerät',
-          onBack: () {
-            // Beim Zurück in die Liste optional erneut scannen
-            setState(() => mode = PlusMode.results);
-            _onScanPressed();
-          },
-        );
+        final device = _connectedDevice;
+        child = device == null
+            ? _TransferFallback(
+                deviceName: connectedDeviceName ?? 'Gerät',
+                onBack: () {
+                  setState(() {
+                    mode = PlusMode.results;
+                    _connectedDevice = null;
+                    connectedDeviceName = null;
+                  });
+                  _onScanPressed();
+                },
+              )
+            : _TransferView(
+                deviceName: connectedDeviceName ?? 'Gerät',
+                device: device,
+                onBack: () {
+                  // Beim Zurück in die Liste optional erneut scannen
+                  setState(() {
+                    mode = PlusMode.results;
+                    _connectedDevice = null;
+                    connectedDeviceName = null;
+                  });
+                  _onScanPressed();
+                },
+              );
         break;
     }
     return AnimatedSwitcher(
@@ -1773,10 +1813,94 @@ class _DeviceRow extends StatelessWidget {
 
 /* --- Dateiübertragung: responsive Ring & Layout (kein Abschneiden mehr) --- */
 
+/// Fallback-Ansicht, falls kein aktives [BluetoothDevice] verfügbar ist (z. B.
+/// wenn die Verbindung zwischenzeitlich getrennt wurde).
+class _TransferFallback extends StatelessWidget {
+  const _TransferFallback({required this.deviceName, required this.onBack});
+  final String deviceName;
+  final VoidCallback onBack;
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+
+    return ListView(
+      key: const ValueKey('transfer-fallback'),
+      padding: const EdgeInsets.fromLTRB(20, 80, 20, 140),
+      children: [
+        Align(
+          alignment: Alignment.centerLeft,
+          child: CupertinoButton(
+            padding: EdgeInsets.zero,
+            onPressed: onBack,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
+              decoration: BoxDecoration(
+                color: cs.surfaceVariant,
+                borderRadius: BorderRadius.circular(24),
+                border: Border.all(color: cs.outlineVariant),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    '<',
+                    style: TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.w700,
+                      color: cs.onSurface,
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Text(
+                    'Dateiübertragung',
+                    style: TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.w600,
+                      color: cs.onSurface,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+        const SizedBox(height: 32),
+        Icon(
+          CupertinoIcons.exclamationmark_triangle,
+          size: 56,
+          color: cs.secondary,
+        ),
+        const SizedBox(height: 16),
+        Text(
+          'Keine aktive Verbindung zu $deviceName gefunden.',
+          style: TextStyle(
+            fontSize: 18,
+            fontWeight: FontWeight.w600,
+            color: cs.onSurface,
+          ),
+        ),
+        const SizedBox(height: 8),
+        Text(
+          'Bitte gehe zurück zur Geräteliste und stelle die Verbindung erneut her.',
+          style: TextStyle(color: cs.onSurface.withOpacity(0.8), fontSize: 15),
+        ),
+      ],
+    );
+  }
+}
+
+/// Verwaltung eines laufenden Transfers inklusive Fortschrittsring und
+/// Dateianforderung per BLE.
 /// Verwaltung eines laufenden Transfers inklusive Fortschrittsring.
 class _TransferView extends StatefulWidget {
-  const _TransferView({required this.deviceName, required this.onBack});
+  const _TransferView({
+    required this.deviceName,
+    required this.device,
+    required this.onBack,
+  });
   final String deviceName;
+  final BluetoothDevice device;
   final VoidCallback onBack;
 
   @override
@@ -1788,8 +1912,96 @@ class _TransferViewState extends State<_TransferView> {
   bool started = false;
   bool done = false;
   int runId = 0;
+  bool _requestInFlight = false;
+  BluetoothCharacteristic? _controlCharacteristic;
 
+  /// Sucht (einmalig) die Kontroll-Characteristic heraus, über die Kommandos
+  /// zum Gerät geschickt werden. Ergebnisse werden gecached.
+  Future<BluetoothCharacteristic> _ensureControlCharacteristic() async {
+    if (_controlCharacteristic != null) return _controlCharacteristic!;
+
+    final services = await widget.device.discoverServices();
+    final targetService = services.firstWhere(
+      (s) =>
+          s.uuid.toString().toLowerCase() == kMyServiceUuid.toLowerCase(),
+      orElse: () =>
+          throw StateError('Service $kMyServiceUuid nicht gefunden.'),
+    );
+
+    final characteristic = targetService.characteristics.firstWhere(
+      (c) =>
+          c.uuid.toString().toLowerCase() == kMyControlCharUuid.toLowerCase(),
+      orElse: () => throw StateError(
+        'Characteristic $kMyControlCharUuid nicht gefunden.',
+      ),
+    );
+
+    _controlCharacteristic = characteristic;
+    return characteristic;
+  }
+
+  /// Sendet das GET_FILE-Kommando an die Steuer-Characteristic. Nutzt – wenn
+  /// vorhanden – einen Write mit Response, fällt sonst auf Write Without
+  /// Response zurück. Falls die Characteristic keine Schreibrechte hat, wird
+  /// eine StateError geworfen.
+  Future<void> _sendGetFileCommand(
+    BluetoothCharacteristic characteristic,
+  ) async {
+    final props = characteristic.properties;
+    final bool supportsWriteWithResponse = props.write;
+    final bool supportsWriteWithoutResponse = props.writeWithoutResponse;
+
+    if (!supportsWriteWithResponse && !supportsWriteWithoutResponse) {
+      throw StateError(
+        'Characteristic ${characteristic.uuid} unterstützt kein Schreiben.',
+      );
+    }
+
+    final payload = utf8.encode('GET_FILE $kTransferFileName');
+    final bool useWithoutResponse =
+        !supportsWriteWithResponse && supportsWriteWithoutResponse;
+
+    await characteristic.write(
+      payload,
+      withoutResponse: useWithoutResponse,
+    );
+  }
+
+  /// Startet den animierten Ablauf, nachdem der GET_FILE-Befehl erfolgreich an
+  /// das Gerät übermittelt wurde.
   Future<void> start() async {
+    if (_requestInFlight) return;
+
+    setState(() => _requestInFlight = true);
+
+    bool success = false;
+    try {
+      final characteristic = await _ensureControlCharacteristic();
+      await _sendGetFileCommand(characteristic);
+
+      await transferStorage.setLastTransferNow();
+      // Erinnerung: startet frühestens nach 1 Minute und erzeugt Folgehinweise.
+      await NotificationService.instance
+          .scheduleIn(const Duration(minutes: 1));
+      success = true;
+    } catch (e) {
+      if (!mounted) return;
+      final msg = e is StateError ? e.message : e.toString();
+      _showSnack(context, 'Dateiabfrage fehlgeschlagen: $msg');
+    } finally {
+      if (!mounted) {
+        _requestInFlight = false;
+        return;
+      }
+      setState(() {
+        _requestInFlight = false;
+        if (success) {
+          started = true;
+          done = false;
+          runId++;
+        }
+      });
+    }
     await transferStorage.setLastTransferNow();
     // Erinnerung: startet frühestens nach 1 Minute und erzeugt Folgehinweise.
     await NotificationService.instance.scheduleIn(const Duration(minutes: 1));
@@ -1928,7 +2140,7 @@ class _TransferViewState extends State<_TransferView> {
                 const Spacer(),
                 CupertinoButton(
                   padding: EdgeInsets.zero,
-                  onPressed: start,
+                  onPressed: _requestInFlight ? null : start,
                   child: Container(
                     padding: const EdgeInsets.symmetric(
                       horizontal: 18,
@@ -1953,6 +2165,20 @@ class _TransferViewState extends State<_TransferView> {
             ),
 
             const SizedBox(height: 20),
+
+            if (_requestInFlight && !started)
+              Center(
+                child: Column(
+                  children: [
+                    const CupertinoActivityIndicator(radius: 12),
+                    const SizedBox(height: 10),
+                    Text(
+                      'Dateiabfrage wird an ${widget.deviceName} gesendet…',
+                      style: TextStyle(color: cs.onSurface.withOpacity(0.8)),
+                    ),
+                  ],
+                ),
+              ),
 
             if (started)
               Center(
