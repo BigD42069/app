@@ -1,155 +1,113 @@
 // ignore_for_file: prefer_const_literals_to_create_immutables, prefer_const_constructors
+
+/* -----------------------------------------------------------------------------
+ * Kalender-App Haupteinstiegspunkt
+ * ---------------------------------------------------------------------------
+ * Diese Datei bündelt den kompletten Einstiegspunkt der Flutter-Anwendung samt
+ * Laufzeitkonfiguration. Hier werden:
+ *   • globale Services initialisiert (Theming, Benachrichtigungen, BLE).
+ *   • mehrere Persistenz-Layer (Theme-, Auth- und Transfer-Storage) definiert.
+ *   • Hilfsklassen für Responsive Layouting, UI-Komponenten und BLE-Scanning
+ *     bereitgestellt.
+ *   • das eigentliche MaterialApp-Widget mitsamt Navigation, Kalender-Ansicht
+ *     und Such-Overlay aufgebaut.
+ * Die Datei ist bewusst in Themenblöcke gegliedert, sodass eng verwandte
+ * Klassen nebeneinanderstehen und durch ausführliche Kommentare begleitet
+ * werden. So lässt sich nachvollziehen, wie Datenfluss, State-Handling und UI
+ * zusammenspielen.
+ *
+ * Inhaltsverzeichnis (zur schnelleren Orientierung):
+ *   1. Anwendungseinstieg & Bootstrap (main + globale Singletons)
+ *   2. Farb- und Theme-Management (AppPalette → ThemeController)
+ *   3. Persistenzlayer für Auth/Transfers sowie Notification-Service
+ *   4. BLE-Funktionen & Responsive Utility
+ *   5. App-Shell, Search-Overlay und Seiten (Kalender, Liste, Plus, Settings)
+ *   6. Dialoge/Widgets (Login, PillLink, ProgressRing, etc.)
+ *   7. Onboarding inkl. Custom Painter Szenen
+ * ---------------------------------------------------------------------------*/
+
+import 'dart:async';
+import 'dart:convert';
+import 'dart:io' show Platform;
 import 'dart:math';
 import 'dart:ui';
+
+import 'package:android_intent_plus/android_intent.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter_blue_plus/flutter_blue_plus.dart';
-import 'dart:async';
-import 'dart:io' show Platform;
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:permission_handler/permission_handler.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:timezone/data/latest.dart' as tz;
 import 'package:timezone/timezone.dart' as tz;
-import 'package:android_intent_plus/android_intent.dart';
+
+/* =============================================================================
+   Anwendungseinstieg & Bootstrap
+   -----------------------------------------------------------------------------
+   Die main()-Funktion wird von der Flutter-Engine aufgerufen und bereitet alle
+   globalen Services vor, bevor das erste Widget gerendert wird. Dazu gehören:
+   1) Initialisierung des NotificationService (inkl. Zeitzonen-Daten).
+   2) Laden der zuletzt gespeicherten Theme-Palette aus SharedPreferences.
+   3) Aufbau eines ThemeController, der per InheritedWidget (ThemeProvider)
+      im gesamten Widgetbaum verfügbar gemacht wird.
+   Erst danach wird die eigentliche App via runApp() gestartet.
+==============================================================================*/
 
 Future<void> main() async {
+  // Stellt sicher, dass WidgetsBinding und Plattformkanäle vor async-Calls
+  // initialisiert sind. Pflicht bei await in main().
   WidgetsFlutterBinding.ensureInitialized();
 
-  // Timezone + Notification-Plugin initialisieren (einmalig)
+  // 1) Timezone-Daten und Notification-Plugin vorbereiten. Dadurch kann der
+  //    NotificationService später sofort Erinnerungen planen.
   tz.initializeTimeZones();
   await NotificationService.instance.init();
 
-  // Theme/Persistenz laden
+  // 2) Persistierte Theme-Farben laden. Falls noch keine Werte vorhanden sind,
+  //    wird die definierte Fallback-Palette verwendet.
   final themeStorage = ThemeStorage();
   final initialPalette = await themeStorage.loadPalette(
     fallback: AppPalette(
-      accent: const Color(0xFFD4AF37), // oder was du bevorzugst
+      accent: const Color(0xFFD4AF37),
       mode: ThemeMode.dark,
     ),
   );
+
+  // 3) ThemeController erstellen und über einen Provider für alle Widgets
+  //    verfügbar machen. Dadurch kann z. B. die Einstellungen-Seite die Farbe
+  //    ändern und sofort eine Aktualisierung triggern.
   final themeController = ThemeController(initialPalette, themeStorage);
 
-  // >>> Provider über die ganze App legen
   runApp(
-    ThemeProvider(controller: themeController, child: const KalenderApp()),
+    ThemeProvider(
+      controller: themeController,
+      child: const KalenderApp(),
+    ),
   );
-}
-
-// === FILTER-KONSTANTEN (deine eigene 128-bit UUID einsetzen) ===
-const String kMyServiceUuid =
-    '12345678-1234-5678-1234-56789abcdef0'; // <— DEINE
-const String kMyNamePrefix =
-    'TACHO-'; // optional; leer lassen, wenn du nicht nach Name filtern willst
-
-// === Geräte-Filter (für ScanResult) ===
-bool isMyDevice(ScanResult r) {
-  // seit flutter_blue_plus 1.28 sind das Guid-Objekte, nicht Strings
-  final hasService = r.advertisementData.serviceUuids.any(
-    (g) => g.toString().toLowerCase() == kMyServiceUuid.toLowerCase(),
-  );
-
-  final name = r.advertisementData.advName.isNotEmpty
-      ? r.advertisementData.advName
-      : r.device.platformName;
-
-  return hasService &&
-      (kMyNamePrefix.isEmpty || name.startsWith(kMyNamePrefix));
-}
-
-Future<bool> ensureBlePermissions() async {
-  if (!Platform.isAndroid) return true;
-
-  // Android 12+ braucht BLUETOOTH_SCAN/CONNECT,
-  // Android <=11 zusätzlich Location (und oft: Standortdienst an)
-  final toRequest = <Permission>[
-    Permission.bluetoothScan,
-    Permission.bluetoothConnect,
-    Permission.locationWhenInUse,
-  ];
-
-  final statuses = await toRequest.request();
-  if (statuses.values.any((s) => s.isPermanentlyDenied)) {
-    await openAppSettings();
-    return false;
-  }
-  return statuses.values.every((s) => s.isGranted);
-}
-
-/* =============================================================================
-   Responsive Utility (R)
-   -----------------------------------------------------------------------------
-   Eine kleine Helferklasse, die Bildschirmbreite/Höhe, Paddings und abgeleitete
-   Breakpoints & Maße bereitstellt. So vermeiden wir magic numbers im Layout
-   und passen uns auf kleineren iPhones besser an (z.B. 15 Pro).
-==============================================================================*/
-
-class R {
-  R(this.context)
-    : size = MediaQuery.of(context).size,
-      pad = MediaQuery.of(context).padding,
-      textScale = MediaQuery.textScalerOf(context);
-
-  final BuildContext context;
-  final Size size;
-  final EdgeInsets pad;
-  final TextScaler textScale;
-
-  double get w => size.width;
-  double get h => size.height;
-
-  // einfache Breakpoints (fein genug für Phones)
-  bool get ultraNarrow => w < 340;
-  bool get narrow => w < 380;
-  bool get compact => w < 420;
-  bool get medium => w < 600;
-
-  // horizontale Ränder/Spacing skalieren leicht mit der Breite
-  double get gutter => w.clamp(320, 480) / 24; // ~13..20
-  double get space => gutter * 0.75;
-
-  // Header-Höhen leicht reduziert auf kompakten Geräten
-  double get headerHLarge => 124 - (compact ? 8 : 0);
-  double get headerHWeek => 46 - (compact ? 4 : 0);
-
-  // Bottom bar / Icons
-  double get bottomBarH => compact ? 56 : 60;
-  double get navIconSize => compact ? 20 : 24;
-  double get navButtonHeight => compact ? 44 : 48;
-
-  // Search-Pill
-  double get searchPillHOpen => compact ? 54 : 60;
-  double get searchPillHClose => compact ? 48 : 52;
-
-  // Calendar grid
-  double get gridAspect => compact ? 1.25 : 1.35;
-  double get dayFont => compact ? 14 : 16;
-  double get dotSize => compact ? 8 : 10;
-
-  // Progress ring (passt sich an verfügbare Breite/Höhe an)
-  double get ringSize => (w - (gutter * 2)).clamp(160.0, 240.0);
-
-  // Pille-Radius (Buttons/Sheets)
-  double pillRadius([bool small = false]) =>
-      small ? (compact ? 16 : 18) : (compact ? 20 : 24);
-}
-
-extension R_ on BuildContext {
-  R get r => R(this);
 }
 
 /* =============================================================================
    Farbschema zur Laufzeit: Model + Controller + Provider
 ==============================================================================*/
 
-/// Schlanke Datenklasse für die App-Farben
+/// Schlanke Datenklasse für die App-Farben.
+///
+/// Sie speichert nur die Werte, die der Nutzer konfigurieren kann: Akzentfarbe
+/// und ThemeMode (hell/dunkel/system). Dadurch bleiben Serialisierung und
+/// Persistenz trivial.
 class AppPalette {
   AppPalette({required this.accent, this.mode = ThemeMode.dark});
 
+  /// Primärfarbe, die z. B. Buttons, Slider und Highlights einfärbt.
   Color accent;
+
+  /// Ausgewählter Theme-Modus. Standard ist Dark, um mit dem bisherigen Look
+  /// kompatibel zu bleiben.
   ThemeMode mode;
 
+  /// Erzeugt eine Kopie mit überschriebenen Feldern (klassisches copyWith).
   AppPalette copyWith({Color? accent, ThemeMode? mode}) =>
       AppPalette(accent: accent ?? this.accent, mode: mode ?? this.mode);
 }
@@ -161,9 +119,14 @@ class ThemeController extends ChangeNotifier {
   AppPalette _palette;
   final ThemeStorage _storage;
 
+  /// Aktuelle Palette, z. B. für AnimatedBuilder.
   AppPalette get palette => _palette;
+
+  /// Bequemer Zugriff auf den aktuellen ThemeMode.
   ThemeMode get mode => _palette.mode;
 
+  /// Konsolidierter Update-Punkt: prüft auf Änderungen, benachrichtigt Hörer
+  /// und speichert anschließend persistente Daten.
   void _update(AppPalette next) {
     // No-Op, wenn sich nichts geändert hat
     if ((next.accent.value == _palette.accent.value) &&
@@ -176,14 +139,14 @@ class ThemeController extends ChangeNotifier {
     _storage.savePalette(_palette);
   }
 
-  // Accent
+  // Accent -----------------------------------------------------------------
   void setAccent(Color color) => _update(_palette.copyWith(accent: color));
   void applyPresetGold() => setAccent(const Color(0xFFD4AF37));
   void applyPresetBlue() => setAccent(const Color(0xFF4EA2C9));
   void applyPresetGreen() => setAccent(const Color(0xFF65C94E));
   void applyPresetPink() => setAccent(const Color(0xFFE15BA6));
 
-  // ThemeMode
+  // ThemeMode --------------------------------------------------------------
   void setThemeMode(ThemeMode m) => _update(_palette.copyWith(mode: m));
   void toggleTheme() =>
       setThemeMode(mode == ThemeMode.dark ? ThemeMode.light : ThemeMode.dark);
@@ -197,6 +160,8 @@ class ThemeProvider extends InheritedNotifier<ThemeController> {
     required Widget child,
   }) : super(notifier: controller, child: child);
 
+  /// Lookup-Helfer, der den Controller aus dem Widgetbaum zieht. Durch das
+  /// assert fällt ein fehlender Provider sofort im Debug-Modus auf.
   static ThemeController of(BuildContext context) {
     final provider = context
         .dependOnInheritedWidgetOfExactType<ThemeProvider>();
@@ -215,7 +180,9 @@ class ThemeStorage {
 
   Future<void> savePalette(AppPalette p) async {
     final sp = await _sp;
+    // Farbe wird als ARGB-Integer gespeichert, um Präzision zu behalten.
     await sp.setInt(_kAccent, p.accent.value);
+    // ThemeMode nutzt die Enum-Namen als eindeutige Strings.
     await sp.setString(_kMode, p.mode.name); // 'light' | 'dark' | 'system'
   }
 
@@ -244,20 +211,25 @@ class AuthStorage {
 
   final Future<SharedPreferences> _sp = SharedPreferences.getInstance();
 
+  /// Prüft, ob der First-Run-Dialog bereits angezeigt wurde.
   Future<bool> firstPromptShown() async =>
       (await _sp).getBool(_kFirstShown) ?? false;
 
+  /// Markiert den First-Run-Dialog als gesehen.
   Future<void> setPromptShown() async =>
       (await _sp).setBool(_kFirstShown, true);
 
+  /// Gibt zurück, ob ein Nutzer eingeloggt ist.
   Future<bool> isLoggedIn() async => (await _sp).getBool(_kLoggedIn) ?? false;
 
+  /// Persistiert Login-Status und den eingegebenen Nutzernamen.
   Future<void> setLoggedIn(String username) async {
     final sp = await _sp;
     await sp.setBool(_kLoggedIn, true);
     await sp.setString(_kUsername, username);
   }
 
+  /// Löscht Login-Zustand und gespeicherten Nutzernamen.
   Future<void> logout() async {
     final sp = await _sp;
     await sp.setBool(_kLoggedIn, false);
@@ -265,17 +237,20 @@ class AuthStorage {
   }
 }
 
+/// Globale Instanz, damit View-Modelle unkompliziert darauf zugreifen können.
 final authStorage = AuthStorage();
 
 class TransferStorage {
   static const _kLastTransferAt = 'last_transfer_at';
   final Future<SharedPreferences> _sp = SharedPreferences.getInstance();
 
+  /// Speichert den aktuellen Zeitpunkt als letzte Übertragung.
   Future<void> setLastTransferNow() async {
     final sp = await _sp;
     await sp.setInt(_kLastTransferAt, DateTime.now().millisecondsSinceEpoch);
   }
 
+  /// Liest den letzten Übertragungszeitpunkt oder `null`, falls keiner vorhanden.
   Future<DateTime?> getLastTransfer() async {
     final sp = await _sp;
     final ms = sp.getInt(_kLastTransferAt);
@@ -284,6 +259,7 @@ class TransferStorage {
   }
 }
 
+/// Merkt sich pro Gerät den Zeitpunkt der letzten Datenübertragung.
 final transferStorage = TransferStorage();
 
 // ===== NotificationService (DROP-IN) =====
@@ -301,6 +277,8 @@ class NotificationService {
 
   bool _inited = false;
 
+  /// Öffnet (falls nötig) die Systemeinstellungen für "Exact Alarms" auf
+  /// Android, damit geplante Notifications zuverlässig zugestellt werden.
   Future<void> openExactAlarmSettingsIfNeeded() async {
     if (!Platform.isAndroid) return;
     // Einfach immer öffnen, wenn geplant & nix ankommt:
@@ -311,6 +289,7 @@ class NotificationService {
     await intent.launch();
   }
 
+  /// Initialisiert das Plugin einmalig (Kanäle, iOS-Permissions etc.).
   Future<void> init() async {
     if (_inited) return;
 
@@ -347,6 +326,9 @@ class NotificationService {
     _inited = true;
   }
 
+  /// Kümmert sich darum, dass die App auf allen Plattformen Notifications
+  /// anzeigen darf. Auf iOS wird aktiv nachgefragt, auf Android ggf. zum
+  /// Systemeinstellungsbildschirm weitergeleitet.
   Future<bool> ensurePermissions() async {
     await init();
 
@@ -416,7 +398,13 @@ class NotificationService {
   }) async {
     await ensurePermissions();
 
-    final when = tz.TZDateTime.now(tz.local).add(const Duration(seconds: 10));
+    // Die Hauptbenachrichtigung soll frühestens nach einer Minute feuern, damit
+    // Nutzer:innen genug Zeit haben, ihre Übertragung anzustoßen. Kürzere
+    // Verzögerungen werden deshalb auf eine Minute angehoben.
+    final Duration effectiveDelay =
+        delay >= const Duration(minutes: 1) ? delay : const Duration(minutes: 1);
+
+    final tz.TZDateTime now = tz.TZDateTime.now(tz.local);
 
     const androidDetails = AndroidNotificationDetails(
       _channelId,
@@ -446,29 +434,179 @@ class NotificationService {
       mode = null; // ältere Plugin-Version -> kein Parameter setzen
     }
 
-    await _plugin.zonedSchedule(
-      id,
-      title,
-      body,
-      when,
-      NotificationDetails(
-        android: androidDetails, // wie gehabt (Importance.max/priority.high)
-        iOS: iosDetails, // wie oben
-      ),
-      androidAllowWhileIdle: true, // egal für iOS, aber ok
-      uiLocalNotificationDateInterpretation:
-          UILocalNotificationDateInterpretation.absoluteTime,
-      // kein 'matchDateTimeComponents', kein 'repeat' (sonst iOS >=60s)
+    Future<void> scheduleNotification({required int notificationId, required Duration offset}) async {
+      final tz.TZDateTime scheduledTime = now.add(offset);
+      await _plugin.zonedSchedule(
+        notificationId,
+        title,
+        body,
+        scheduledTime,
+        details,
+        androidAllowWhileIdle: true, // egal für iOS, aber ok
+        uiLocalNotificationDateInterpretation:
+            UILocalNotificationDateInterpretation.absoluteTime,
+        androidScheduleMode: mode,
+        // kein 'matchDateTimeComponents', kein 'repeat' (sonst iOS >=60s)
+      );
+    }
+
+    // Erinnerung bei ~50 % und ~90 % der Gesamtzeit. Die Verzögerungen werden
+    // nur genutzt, wenn sie strikt vor der Hauptbenachrichtigung liegen – so
+    // bleibt die Reihenfolge garantiert.
+    final Duration halfDelay = Duration(
+      milliseconds: (effectiveDelay.inMilliseconds * 0.5).round(),
     );
+    if (halfDelay > Duration.zero && halfDelay < effectiveDelay) {
+      await scheduleNotification(notificationId: id + 1, offset: halfDelay);
+    }
+
+    final Duration ninetyDelay = Duration(
+      milliseconds: (effectiveDelay.inMilliseconds * 0.9).round(),
+    );
+    if (ninetyDelay > Duration.zero && ninetyDelay < effectiveDelay) {
+      await scheduleNotification(notificationId: id + 2, offset: ninetyDelay);
+    }
+
+    await scheduleNotification(notificationId: id, offset: effectiveDelay);
   }
 
   @Deprecated('Nutze scheduleIn(Duration) statt scheduleReminderIn.')
   Future<void> scheduleReminderIn(Duration delay) => scheduleIn(delay);
 
+  /// Hebt eine zuvor geplante Erinnerung wieder auf.
   Future<void> cancelReminder({int id = _defaultId}) async {
     await init();
     await _plugin.cancel(id);
   }
+}
+
+/* =============================================================================
+   Bluetooth Low Energy (BLE) – Filter & Berechtigungen
+   -----------------------------------------------------------------------------
+   Hier wird definiert, welche Geräte beim Scan erkannt werden sollen und welche
+   Berechtigungen dafür auf Android benötigt werden. Die Filter-Kombination aus
+   Service-UUID und optionalem Namenspräfix verhindert, dass sich fremde Geräte
+   einblenden. Die Permission-Routine berücksichtigt die seit Android 12
+   getrennten Bluetooth-Rechte.
+==============================================================================*/
+
+/// Eindeutige Service-UUID, die vom Gerät gesendet wird.
+const String kMyServiceUuid = '12345678-1234-5678-1234-56789abcdef0';
+
+/// Optionales Namenspräfix, um die Trefferliste weiter einzugrenzen.
+const String kMyNamePrefix = 'TACHO-';
+
+/// UUID der Kontroll-Characteristic, über die Kommandos (GET_FILE etc.) laufen.
+const String kMyControlCharUuid = '12345678-1234-5678-1234-56789abcdef1';
+
+/// Dateiname, der beim initialen Abruf vom Gerät angefordert wird.
+const String kTransferFileName = 'ddd.ddd';
+
+/// Prüft, ob ein ScanResult zu unserem Gerät gehört.
+bool isMyDevice(ScanResult r) {
+  // Seit flutter_blue_plus 1.28 werden UUIDs als Guid-Objekte geliefert, daher
+  // konvertieren wir zur String-Darstellung und vergleichen case-insensitiv.
+  final hasService = r.advertisementData.serviceUuids.any(
+    (g) => g.toString().toLowerCase() == kMyServiceUuid.toLowerCase(),
+  );
+
+  // Priorisiert den Advertising-Namen, fällt sonst auf den Plattformnamen zurück
+  // (z. B. iOS: Geräteliste, Android: Bluetooth-Nickname).
+  final name = r.advertisementData.advName.isNotEmpty
+      ? r.advertisementData.advName
+      : r.device.platformName;
+
+  return hasService && (kMyNamePrefix.isEmpty || name.startsWith(kMyNamePrefix));
+}
+
+/// Fordert alle benötigten BLE-Berechtigungen an (Android-spezifisch).
+Future<bool> ensureBlePermissions() async {
+  // Auf iOS bzw. Desktop greifen andere Mechanismen -> keine Laufzeitanfrage.
+  if (!Platform.isAndroid) return true;
+
+  // Android 12+: getrennte Rechte für Scan/Connect. Auf älteren Android-Versionen
+  // wird zusätzlich Standort-Zugriff verlangt.
+  final toRequest = <Permission>[
+    Permission.bluetoothScan,
+    Permission.bluetoothConnect,
+    Permission.locationWhenInUse,
+  ];
+
+  final statuses = await toRequest.request();
+  if (statuses.values.any((s) => s.isPermanentlyDenied)) {
+    // Sobald der Nutzer ein Recht dauerhaft verweigert hat, leiten wir zu den
+    // Systemeinstellungen weiter und brechen mit false ab.
+    await openAppSettings();
+    return false;
+  }
+
+  // Nur wenn alle Permissions gewährt wurden, kehren wir mit true zurück.
+  return statuses.values.every((s) => s.isGranted);
+}
+
+/* =============================================================================
+   Responsive Utility (R)
+   -----------------------------------------------------------------------------
+   Diese Helper-Klasse ist die zentrale Stelle für Layout-Konstanten. Sie liest
+   aktuelle MediaQuery-Werte aus und bietet darauf aufbauend berechnete
+   Eigenschaften (Abstände, Höhen, Breakpoints). Sämtliche Widgets greifen
+   darüber auf konsistente Maße zu, wodurch Pixelwerte nicht unkontrolliert im
+   Code verteilt werden. Die zugehörige Extension erlaubt einfachen Zugriff via
+   `context.r` überall im Widgetbaum.
+==============================================================================*/
+
+class R {
+  R(this.context)
+      : size = MediaQuery.of(context).size,
+        pad = MediaQuery.of(context).padding,
+        textScale = MediaQuery.textScalerOf(context);
+
+  /// Referenz auf den aufrufenden BuildContext, falls später weitere
+  /// MediaQuery-Werte benötigt werden.
+  final BuildContext context;
+
+  /// Aktuelle Bildschirmgröße; daraus werden Breiten/Höhen abgeleitet.
+  final Size size;
+
+  /// Sichere Bereiche (Notch, Home Indicator etc.), um Padding anzupassen.
+  final EdgeInsets pad;
+
+  /// Globale Textskalierung des Nutzers (Barrierefreiheit).
+  final TextScaler textScale;
+
+  /// Komfortable Getter zur Bildschirmbreite/-höhe.
+  double get w => size.width;
+  double get h => size.height;
+
+  // --- Breakpoints ---------------------------------------------------------
+  bool get ultraNarrow => w < 340;
+  bool get narrow => w < 380;
+  bool get compact => w < 420;
+  bool get medium => w < 600;
+
+  // --- Abstände & Maße -----------------------------------------------------
+  double get gutter => w.clamp(320, 480) / 24; // ~13..20px je nach Gerät
+  double get space => gutter * 0.75;
+  double get headerHLarge => 124 - (compact ? 8 : 0);
+  double get headerHWeek => 46 - (compact ? 4 : 0);
+  double get bottomBarH => compact ? 56 : 60;
+  double get navIconSize => compact ? 20 : 24;
+  double get navButtonHeight => compact ? 44 : 48;
+  double get searchPillHOpen => compact ? 54 : 60;
+  double get searchPillHClose => compact ? 48 : 52;
+  double get gridAspect => compact ? 1.25 : 1.35;
+  double get dayFont => compact ? 14 : 16;
+  double get dotSize => compact ? 8 : 10;
+  double get ringSize => (w - (gutter * 2)).clamp(160.0, 240.0);
+
+  /// Abgerundete Pille-Radien, optional kleiner Modus für Buttons etc.
+  double pillRadius([bool small = false]) =>
+      small ? (compact ? 16 : 18) : (compact ? 20 : 24);
+}
+
+extension R_ on BuildContext {
+  /// Praktischer Zugriff auf die responsive Helper-Instanz über `context.r`.
+  R get r => R(this);
 }
 
 /* =============================================================================
@@ -580,15 +718,21 @@ class KalenderApp extends StatelessWidget {
 }
 
 /* =============================================================================
-   APP-SHELL: 5 Tabs (Kalender, Liste, Plus, Suche, Einstellungen)
+   App-Shell & Navigation
+   -----------------------------------------------------------------------------
+   Enthält den Haupt-Shell-Container mit fünf Tabs (Kalender, Liste, Plus,
+   Suche, Einstellungen) sowie begleitende Widgets für das Such-Overlay. Diese
+   Sektion verwaltet Auth-Gates, Bottom-Navigation und Tastatur-Handling.
 ==============================================================================*/
 
+/// Rahmen-Widget der Applikation mit Tab-Navigation und globalem Such-Overlay.
 class Shell extends StatefulWidget {
   const Shell({super.key});
   @override
   State<Shell> createState() => _ShellState();
 }
 
+/// Zustandsobjekt verwaltet Tab-Auswahl, Fokus und Authentifizierungs-Gate.
 class _ShellState extends State<Shell> with WidgetsBindingObserver {
   int selectedIndex = 0;
 
@@ -623,6 +767,7 @@ class _ShellState extends State<Shell> with WidgetsBindingObserver {
     super.dispose();
   }
 
+  /// Öffnet den Onboarding-/Login-Flow, falls noch kein Nutzer angemeldet ist.
   Future<void> _showAuthGateIfNeeded() async {
     if (!mounted) return;
     final loggedIn = await authStorage.isLoggedIn();
@@ -645,6 +790,7 @@ class _ShellState extends State<Shell> with WidgetsBindingObserver {
 
   @override
   Widget build(BuildContext context) {
+    // Prüfen, ob Tastatur offen ist, um Bottom-Bar/Overlay dynamisch anzupassen.
     final kbVisible = MediaQuery.of(context).viewInsets.bottom > 0;
 
     return Scaffold(
@@ -723,6 +869,14 @@ class _ShellState extends State<Shell> with WidgetsBindingObserver {
    Such-Overlay (über der Tastatur)
 ==============================================================================*/
 
+/* =============================================================================
+   Such-Overlay Komponenten
+   -----------------------------------------------------------------------------
+   Enthält Widgets und Hilfskurven für die animierte Suche, die über der
+   Bottom-Bar eingeblendet wird, wenn Tab 3 aktiv ist.
+==============================================================================*/
+
+/// Zeigt eine pillenförmige Suchleiste, die über der Bottom-Bar schwebt.
 class _SearchOverlayPill extends StatelessWidget {
   const _SearchOverlayPill({
     required this.focusNode,
@@ -769,6 +923,7 @@ class _SearchOverlayPill extends StatelessWidget {
   }
 }
 
+/// Verpackt das Suchfeld inklusive Animationen für Öffnen/Schließen.
 class _DockedSearchOverlay extends StatelessWidget {
   const _DockedSearchOverlay({
     required this.focusNode,
@@ -835,6 +990,7 @@ class _DockedSearchOverlay extends StatelessWidget {
 }
 
 /// Sanfter „Vorlauf“ innerhalb der Animationsdauer (wirkt hochwertiger)
+/// Zeitabschnitt-basierte Curve, die nur innerhalb eines Teilintervalls wirkt.
 class _IntervalCurve extends Curve {
   const _IntervalCurve(this.begin, this.end, this.curve)
     : assert(begin >= 0 && end <= 1 && begin < end);
@@ -853,6 +1009,7 @@ class _IntervalCurve extends Curve {
 }
 
 /// BackOut mit etwas mehr Overshoot (für Bottom-Bar Animationen)
+/// Dehnt die Standard `Curves.easeOutBack` für stärkeres Overshooting.
 class _BackMoreOut extends Curve {
   const _BackMoreOut([this.overshoot = 1.6]);
   final double overshoot;
@@ -868,6 +1025,7 @@ class _BackMoreOut extends Curve {
    Sonstige Seiten
 ==============================================================================*/
 
+/// Placeholder-Seite für noch nicht implementierte Tabs (z. B. Suche).
 class EmptyPage extends StatelessWidget {
   const EmptyPage({super.key, required this.title});
   final String title;
@@ -877,6 +1035,14 @@ class EmptyPage extends StatelessWidget {
   );
 }
 
+/* =============================================================================
+   Listenansicht & Transfer Tab
+   -----------------------------------------------------------------------------
+   Vereint Platzhalter, Verlaufsübersicht sowie den Plus-Tab, der den BLE-Scan
+   und Datei-Transfer anstößt. Enthält Intro/Ergebnis-Views und Hilfswidgets.
+==============================================================================*/
+
+/// Stellt vergangene Übertragungen als scrollbare Liste dar.
 class ListPage extends StatelessWidget {
   const ListPage({super.key});
 
@@ -943,17 +1109,20 @@ class ListPage extends StatelessWidget {
 
 enum PlusMode { intro, results, transfer }
 
+/// Startseite für den Datei-Transfer inkl. Status- und Ergebnisansichten.
 class PlusPage extends StatefulWidget {
   const PlusPage({super.key});
   @override
   State<PlusPage> createState() => _PlusPageState();
 }
 
+/// State-Objekt kombiniert Transfer-Fortschritt, BLE-Ergebnisse und Dialoge.
 class _PlusPageState extends State<PlusPage> {
   PlusMode mode = PlusMode.intro;
 
   DateTime? lastScanAt;
-  String? connectedDevice;
+  String? connectedDeviceName;
+  BluetoothDevice? _connectedDevice;
 
   // Bluetooth / Scan-State
   bool scanning = false;
@@ -1066,14 +1235,19 @@ class _PlusPageState extends State<PlusPage> {
 
   void _backToIntro() {
     _stopScan();
-    setState(() => mode = PlusMode.intro);
+    setState(() {
+      mode = PlusMode.intro;
+      _connectedDevice = null;
+      connectedDeviceName = null;
+    });
   }
 
   Future<void> _connectTo(ScanResult r) async {
     final dev = r.device;
     _stopScan();
     setState(() {
-      connectedDevice = _bestName(r);
+      connectedDeviceName = _bestName(r);
+      _connectedDevice = dev;
       mode = PlusMode.transfer;
     });
 
@@ -1088,7 +1262,8 @@ class _PlusPageState extends State<PlusPage> {
       // zurück in die Ergebnisliste, damit der User neu probieren kann
       setState(() {
         mode = PlusMode.results;
-        connectedDevice = null;
+        connectedDeviceName = null;
+        _connectedDevice = null;
       });
     }
   }
@@ -1117,14 +1292,32 @@ class _PlusPageState extends State<PlusPage> {
         );
         break;
       case PlusMode.transfer:
-        child = _TransferView(
-          deviceName: connectedDevice ?? 'Gerät',
-          onBack: () {
-            // Beim Zurück in die Liste optional erneut scannen
-            setState(() => mode = PlusMode.results);
-            _onScanPressed();
-          },
-        );
+        final device = _connectedDevice;
+        child = device == null
+            ? _TransferFallback(
+                deviceName: connectedDeviceName ?? 'Gerät',
+                onBack: () {
+                  setState(() {
+                    mode = PlusMode.results;
+                    _connectedDevice = null;
+                    connectedDeviceName = null;
+                  });
+                  _onScanPressed();
+                },
+              )
+            : _TransferView(
+                deviceName: connectedDeviceName ?? 'Gerät',
+                device: device,
+                onBack: () {
+                  // Beim Zurück in die Liste optional erneut scannen
+                  setState(() {
+                    mode = PlusMode.results;
+                    _connectedDevice = null;
+                    connectedDeviceName = null;
+                  });
+                  _onScanPressed();
+                },
+              );
         break;
     }
     return AnimatedSwitcher(
@@ -1136,6 +1329,7 @@ class _PlusPageState extends State<PlusPage> {
   }
 }
 
+/// Einstiegskachel mit Icons und Erklärungen vor dem ersten Scan.
 class _IntroView extends StatelessWidget {
   const _IntroView({required this.onScan, this.lastScanAt});
   final VoidCallback onScan;
@@ -1296,6 +1490,7 @@ void _showSnack(BuildContext context, String msg) {
   );
 }
 
+/// Zeigt Scanresultate sowie Hinweise zum Verbindungsaufbau an.
 class _ResultsView extends StatelessWidget {
   const _ResultsView({
     required this.onBack,
@@ -1437,6 +1632,7 @@ class _ResultsView extends StatelessWidget {
   }
 }
 
+/// Listenzeile mit Icon + Beschreibung für Kleingedrucktes.
 class _InfoRow extends StatelessWidget {
   const _InfoRow({required this.icon, required this.text});
   final IconData icon;
@@ -1463,6 +1659,7 @@ class _InfoRow extends StatelessWidget {
   }
 }
 
+/// Spezialisierte Zeile für gefundene BLE-Geräte mit Connect-Button.
 class _BtDeviceRow extends StatelessWidget {
   const _BtDeviceRow({
     required this.name,
@@ -1534,6 +1731,7 @@ class _BtDeviceRow extends StatelessWidget {
   }
 }
 
+/// Generische Darstellung eines BLE-Geräts mit Icon + Zusatzinfos.
 class _DeviceRow extends StatelessWidget {
   const _DeviceRow({
     required this.name,
@@ -1607,29 +1805,194 @@ class _DeviceRow extends StatelessWidget {
 
 /* --- Dateiübertragung: responsive Ring & Layout (kein Abschneiden mehr) --- */
 
-class _TransferView extends StatefulWidget {
-  const _TransferView({required this.deviceName, required this.onBack});
+/// Fallback-Ansicht, falls kein aktives [BluetoothDevice] verfügbar ist (z. B.
+/// wenn die Verbindung zwischenzeitlich getrennt wurde).
+class _TransferFallback extends StatelessWidget {
+  const _TransferFallback({required this.deviceName, required this.onBack});
   final String deviceName;
+  final VoidCallback onBack;
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+
+    return ListView(
+      key: const ValueKey('transfer-fallback'),
+      padding: const EdgeInsets.fromLTRB(20, 80, 20, 140),
+      children: [
+        Align(
+          alignment: Alignment.centerLeft,
+          child: CupertinoButton(
+            padding: EdgeInsets.zero,
+            onPressed: onBack,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
+              decoration: BoxDecoration(
+                color: cs.surfaceVariant,
+                borderRadius: BorderRadius.circular(24),
+                border: Border.all(color: cs.outlineVariant),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    '<',
+                    style: TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.w700,
+                      color: cs.onSurface,
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Text(
+                    'Dateiübertragung',
+                    style: TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.w600,
+                      color: cs.onSurface,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+        const SizedBox(height: 32),
+        Icon(
+          CupertinoIcons.exclamationmark_triangle,
+          size: 56,
+          color: cs.secondary,
+        ),
+        const SizedBox(height: 16),
+        Text(
+          'Keine aktive Verbindung zu $deviceName gefunden.',
+          style: TextStyle(
+            fontSize: 18,
+            fontWeight: FontWeight.w600,
+            color: cs.onSurface,
+          ),
+        ),
+        const SizedBox(height: 8),
+        Text(
+          'Bitte gehe zurück zur Geräteliste und stelle die Verbindung erneut her.',
+          style: TextStyle(color: cs.onSurface.withOpacity(0.8), fontSize: 15),
+        ),
+      ],
+    );
+  }
+}
+
+/// Verwaltung eines laufenden Transfers inklusive Fortschrittsring und
+/// Dateianforderung per BLE.
+class _TransferView extends StatefulWidget {
+  const _TransferView({
+    required this.deviceName,
+    required this.device,
+    required this.onBack,
+  });
+  final String deviceName;
+  final BluetoothDevice device;
   final VoidCallback onBack;
 
   @override
   State<_TransferView> createState() => _TransferViewState();
 }
 
+/// Kümmert sich um Animationen, State und Übergänge für den Transferbereich.
 class _TransferViewState extends State<_TransferView> {
   bool started = false;
   bool done = false;
   int runId = 0;
+  bool _requestInFlight = false;
+  BluetoothCharacteristic? _controlCharacteristic;
 
+  /// Sucht (einmalig) die Kontroll-Characteristic heraus, über die Kommandos
+  /// zum Gerät geschickt werden. Ergebnisse werden gecached.
+  Future<BluetoothCharacteristic> _ensureControlCharacteristic() async {
+    if (_controlCharacteristic != null) return _controlCharacteristic!;
+
+    final services = await widget.device.discoverServices();
+    final targetService = services.firstWhere(
+      (s) =>
+          s.uuid.toString().toLowerCase() == kMyServiceUuid.toLowerCase(),
+      orElse: () =>
+          throw StateError('Service $kMyServiceUuid nicht gefunden.'),
+    );
+
+    final characteristic = targetService.characteristics.firstWhere(
+      (c) =>
+          c.uuid.toString().toLowerCase() == kMyControlCharUuid.toLowerCase(),
+      orElse: () => throw StateError(
+        'Characteristic $kMyControlCharUuid nicht gefunden.',
+      ),
+    );
+
+    _controlCharacteristic = characteristic;
+    return characteristic;
+  }
+
+  /// Sendet das GET_FILE-Kommando an die Steuer-Characteristic. Nutzt – wenn
+  /// vorhanden – einen Write mit Response, fällt sonst auf Write Without
+  /// Response zurück. Falls die Characteristic keine Schreibrechte hat, wird
+  /// eine StateError geworfen.
+  Future<void> _sendGetFileCommand(
+    BluetoothCharacteristic characteristic,
+  ) async {
+    final props = characteristic.properties;
+    final bool supportsWriteWithResponse = props.write;
+    final bool supportsWriteWithoutResponse = props.writeWithoutResponse;
+
+    if (!supportsWriteWithResponse && !supportsWriteWithoutResponse) {
+      throw StateError(
+        'Characteristic ${characteristic.uuid} unterstützt kein Schreiben.',
+      );
+    }
+
+    final payload = utf8.encode('GET_FILE $kTransferFileName');
+    final bool useWithoutResponse =
+        !supportsWriteWithResponse && supportsWriteWithoutResponse;
+
+    await characteristic.write(
+      payload,
+      withoutResponse: useWithoutResponse,
+    );
+  }
+
+  /// Startet den animierten Ablauf, nachdem der GET_FILE-Befehl erfolgreich an
+  /// das Gerät übermittelt wurde.
   Future<void> start() async {
-    await transferStorage.setLastTransferNow();
-    // Test: 10 Sekunden
-    await NotificationService.instance.scheduleIn(const Duration(seconds: 10));
-    setState(() {
-      started = true;
-      done = false;
-      runId++;
-    });
+    if (_requestInFlight) return;
+
+    setState(() => _requestInFlight = true);
+
+    bool success = false;
+    try {
+      final characteristic = await _ensureControlCharacteristic();
+      await _sendGetFileCommand(characteristic);
+
+      await transferStorage.setLastTransferNow();
+      // Erinnerung: startet frühestens nach 1 Minute und erzeugt Folgehinweise.
+      await NotificationService.instance
+          .scheduleIn(const Duration(minutes: 1));
+      success = true;
+    } catch (e) {
+      if (!mounted) return;
+      final msg = e is StateError ? e.message : e.toString();
+      _showSnack(context, 'Dateiabfrage fehlgeschlagen: $msg');
+    } finally {
+      if (!mounted) {
+        _requestInFlight = false;
+        return;
+      }
+      setState(() {
+        _requestInFlight = false;
+        if (success) {
+          started = true;
+          done = false;
+          runId++;
+        }
+      });
+    }
   }
 
   void _onFinished() {
@@ -1760,7 +2123,7 @@ class _TransferViewState extends State<_TransferView> {
                 const Spacer(),
                 CupertinoButton(
                   padding: EdgeInsets.zero,
-                  onPressed: start,
+                  onPressed: _requestInFlight ? null : start,
                   child: Container(
                     padding: const EdgeInsets.symmetric(
                       horizontal: 18,
@@ -1786,6 +2149,20 @@ class _TransferViewState extends State<_TransferView> {
 
             const SizedBox(height: 20),
 
+            if (_requestInFlight && !started)
+              Center(
+                child: Column(
+                  children: [
+                    const CupertinoActivityIndicator(radius: 12),
+                    const SizedBox(height: 10),
+                    Text(
+                      'Dateiabfrage wird an ${widget.deviceName} gesendet…',
+                      style: TextStyle(color: cs.onSurface.withOpacity(0.8)),
+                    ),
+                  ],
+                ),
+              ),
+
             if (started)
               Center(
                 child: _ProgressRing(
@@ -1803,6 +2180,7 @@ class _TransferViewState extends State<_TransferView> {
   }
 }
 
+/// Animierter Kreis, der verbleibenden Fortschritt visualisiert.
 class _ProgressRing extends StatefulWidget {
   const _ProgressRing({
     super.key,
@@ -1819,6 +2197,7 @@ class _ProgressRing extends StatefulWidget {
   State<_ProgressRing> createState() => _ProgressRingState();
 }
 
+/// Legt Animationscontroller und CustomPainter für den Fortschrittsring an.
 class _ProgressRingState extends State<_ProgressRing>
     with SingleTickerProviderStateMixin {
   late final AnimationController _ctrl;
@@ -1885,6 +2264,7 @@ class _ProgressRingState extends State<_ProgressRing>
   }
 }
 
+/// Zeichnet den Ring inklusive Ticks, Fortschrittsbogen und glühender Kante.
 class _RingPainter extends CustomPainter {
   _RingPainter({
     required this.progress,
@@ -1945,12 +2325,14 @@ class _RingPainter extends CustomPainter {
    Kalender-Home (großer Titel + Wochentage + Monatsraster)
 ==============================================================================*/
 
+/// Hauptkalender mit kombinierter Monats- und Wochenübersicht.
 class CalendarHomePage extends StatefulWidget {
   const CalendarHomePage({super.key});
   @override
   State<CalendarHomePage> createState() => _CalendarHomePageState();
 }
 
+/// Verwaltet ScrollController, Animationen und Dialoginteraktionen.
 class _CalendarHomePageState extends State<CalendarHomePage> {
   final ScrollController _scroll = ScrollController();
   static final DateTime _startMonth = DateTime(2025, 6, 1);
@@ -2064,6 +2446,7 @@ class _CalendarHomePageState extends State<CalendarHomePage> {
   }
 }
 
+/// Sliver-Header für den großen Monatsnamen inklusive Animationen.
 class _LargeTitleHeader extends SliverPersistentHeaderDelegate {
   _LargeTitleHeader({required this.monthText});
   final String monthText;
@@ -2103,6 +2486,7 @@ class _LargeTitleHeader extends SliverPersistentHeaderDelegate {
       old.monthText != monthText;
 }
 
+/// Fixierter Header, der die Wochentage im ScrollView anzeigt.
 class _WeekdaysBar extends SliverPersistentHeaderDelegate {
   const _WeekdaysBar();
   @override
@@ -2145,6 +2529,7 @@ class _WeekdaysBar extends SliverPersistentHeaderDelegate {
   bool shouldRebuild(covariant _WeekdaysBar old) => false;
 }
 
+/// Statischer Wochentagsbalken für nicht-scrollende Layouts.
 class WeekdaysRow extends StatelessWidget {
   const WeekdaysRow({super.key});
   @override
@@ -2170,6 +2555,7 @@ class WeekdaysRow extends StatelessWidget {
   }
 }
 
+/// Verpackt einen Monatsblock inklusive Titel und Grid.
 class MonthSection extends StatelessWidget {
   const MonthSection({super.key, required this.month});
   final DateTime month;
@@ -2216,6 +2602,7 @@ class MonthSection extends StatelessWidget {
 
 /* --- MonthGrid optimiert: weniger Lookups/Allokationen pro Zelle ---------- */
 
+/// Baut das Monatsgitter mit Tagen, Markierungen und heutigen Datum.
 class MonthGrid extends StatelessWidget {
   const MonthGrid({super.key, required this.month, this.cellAspect});
 
@@ -2333,6 +2720,7 @@ class MonthGrid extends StatelessWidget {
    Bottom Navigation (Glas / responsive)
 ==============================================================================*/
 
+/// Custom-Bottom-Bar mit Glas-Effekt und integrierter Suchleiste.
 class GlassBottomBarSegmented extends StatelessWidget {
   const GlassBottomBarSegmented({
     super.key,
@@ -2532,6 +2920,7 @@ class GlassBottomBarSegmented extends StatelessWidget {
 }
 
 /// Einheitliche Glasfläche (Blur + Gradient + Border), folgt Theme
+/// Render-Schicht für den Glassmorphism-Hintergrund der Navigation.
 class _GlassSurface extends StatelessWidget {
   const _GlassSurface({
     required this.child,
@@ -2585,6 +2974,7 @@ class _GlassSurface extends StatelessWidget {
   }
 }
 
+/// Gruppiert Navigations-Icons, Label und optionalen Search-Pill.
 class _GlassGroup extends StatelessWidget {
   const _GlassGroup({
     super.key,
@@ -2613,6 +3003,7 @@ class _GlassGroup extends StatelessWidget {
   }
 }
 
+/// Einzelnes Icon im Navigationsbereich mit Hover-/Active-State.
 class _NavIcon extends StatelessWidget {
   const _NavIcon({
     required this.icon,
@@ -2651,6 +3042,7 @@ class _NavIcon extends StatelessWidget {
    Widgets (kleine Hilfsklassen)
 ==============================================================================*/
 
+/// Überschrift für Transfer-Schritte mit kleinerem Untertitel.
 class _StepTitle extends StatelessWidget {
   const _StepTitle(this.text, {super.key});
   final String text;
@@ -2669,6 +3061,7 @@ class _StepTitle extends StatelessWidget {
   }
 }
 
+/// Dialog, der Benutzername/Passwort abfragt und im Storage persistiert.
 class _LoginDialog extends StatefulWidget {
   const _LoginDialog({super.key});
 
@@ -2676,6 +3069,7 @@ class _LoginDialog extends StatefulWidget {
   State<_LoginDialog> createState() => _LoginDialogState();
 }
 
+/// Kümmert sich um Form-Validierung und Rückgabe der Login-Daten.
 class _LoginDialogState extends State<_LoginDialog> {
   final _u = TextEditingController();
   final _p = TextEditingController();
@@ -2860,6 +3254,14 @@ class _LoginDialogState extends State<_LoginDialog> {
    Einstellungen (ThemeMode + Farben)
 ==============================================================================*/
 
+/* =============================================================================
+   Einstellungen & Hilfsdialoge
+   -----------------------------------------------------------------------------
+   Optionen für Theme-Anpassung, Login und First-Run-Hinweise. Ergänzt um
+   wiederverwendbare Widgets wie PillLink und SectionHeader.
+==============================================================================*/
+
+/// Einstellungsseite für Farben, Dark/Light-Mode und Utility-Aktionen.
 class SettingsPage extends StatelessWidget {
   const SettingsPage({super.key});
 
@@ -3207,6 +3609,7 @@ class SettingsPage extends StatelessWidget {
   }
 }
 
+/// Ein einzelnes Farbmuster zum schnellen Wechsel des Akzenttons.
 class _ColorChip extends StatelessWidget {
   const _ColorChip({
     required this.color,
@@ -3246,6 +3649,7 @@ class _ColorChip extends StatelessWidget {
   }
 }
 
+/// Überschrift-Widget mit optionaler Action-Schaltfläche.
 class _SectionHeader extends StatelessWidget {
   const _SectionHeader(this.text, {super.key});
   final String text;
@@ -3264,7 +3668,8 @@ class _SectionHeader extends StatelessWidget {
   }
 }
 
-/// Klickbare „Pill“-Schaltfläche mit Chevron (Theme-aware)
+/// Klickbare „Pill“-Schaltfläche mit Chevron – wirkt wie ein Link, reagiert
+/// aber auf Tap wie ein Button.
 class PillLink extends StatelessWidget {
   const PillLink({
     super.key,
@@ -3323,6 +3728,14 @@ class PillLink extends StatelessWidget {
 
 // ==================== FIRST RUN FULLSCREEN ====================
 
+/* =============================================================================
+   Onboarding & First-Run Flows
+   -----------------------------------------------------------------------------
+   Kombiniert den simplen FirstRunScreen, die mehrstufige Onboarding-Sequenz
+   sowie CustomPainter-basierte Illustrationen.
+==============================================================================*/
+
+/// Einfacher Screen, der nach dem ersten App-Start erklärt was zu tun ist.
 class FirstRunScreen extends StatelessWidget {
   const FirstRunScreen({super.key});
 
@@ -3483,6 +3896,7 @@ class FirstRunScreen extends StatelessWidget {
 }
 
 // ------------- Szene (Berge + Straße) wie im Screenshot ----------------
+/// Malt die Intro-Illustration (Straße, Himmel, LKW etc.).
 class _OnboardingScenePainter extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
@@ -3549,12 +3963,14 @@ class _OnboardingScenePainter extends CustomPainter {
 }
 
 // === ONBOARDING (Vollbild) ================================================
+/// Vollbild-Onboarding mit Schrittindikator, Buttons und Animationen.
 class OnboardingScreen extends StatefulWidget {
   const OnboardingScreen({super.key});
   @override
   State<OnboardingScreen> createState() => _OnboardingScreenState();
 }
 
+/// State-Objekt verwaltet PageView, Animationen und Persistenz-Flags.
 class _OnboardingScreenState extends State<OnboardingScreen> {
   @override
   void didChangeDependencies() {
@@ -3749,6 +4165,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
   }
 }
 
+/// Einheitlicher Button-Stil für das Onboarding (Primär/Sekundär).
 class _OnbButton extends StatelessWidget {
   const _OnbButton({
     required this.width,
@@ -3797,6 +4214,7 @@ class _OnbButton extends StatelessWidget {
   }
 }
 
+/// Raster-Element mit Logo/Partneranzeige im Onboarding.
 class _LogoTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
@@ -3831,6 +4249,7 @@ class _LogoTile extends StatelessWidget {
 
 /// Zeichnet Berge + Straße + gestrichelte Mittelspur.
 /// Speziell so aufgebaut wie deine Figma-Formen (Dreiecke/Trapez).
+/// Zeichenlogik für die Straße inkl. Streifen & perspektivischem Verlauf.
 class _RoadScenePainter extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
