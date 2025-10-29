@@ -44,6 +44,8 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:timezone/data/latest.dart' as tz;
 import 'package:timezone/timezone.dart' as tz;
 
+import 'tachograph_repository.dart';
+
 /* =============================================================================
    Anwendungseinstieg & Bootstrap
    -----------------------------------------------------------------------------
@@ -509,7 +511,6 @@ const String kMyNamePrefix = 'TACHO-';
 const String kMyControlCharUuid = '12345678-1234-5678-1234-56789abcdef1';
 
 /// Dateiname, der beim initialen Abruf vom Gerät angefordert wird.
-const String kTransferFileName = 'ddd.ddd';
 
 /// Prüft, ob ein ScanResult zu unserem Gerät gehört.
 bool isMyDevice(ScanResult r) {
@@ -1052,55 +1053,172 @@ class EmptyPage extends StatelessWidget {
 ==============================================================================*/
 
 /// Stellt vergangene Übertragungen als scrollbare Liste dar.
-class ListPage extends StatelessWidget {
+class ListPage extends StatefulWidget {
   const ListPage({super.key});
 
-  List<Map<String, String>> _generateFakeDates() {
-    final rng = Random();
-    final now = DateTime.now();
-    return List.generate(12, (i) {
-      final randomDays = rng.nextInt(1000);
-      final date = now.add(Duration(days: randomDays));
-      final dateStr =
-          "${date.day.toString().padLeft(2, '0')}.${date.month.toString().padLeft(2, '0')}.${date.year}";
-      return {
-        "title": dateStr,
-        "subtitle": "Beispieltext für $dateStr – lorem ipsum dolor sit amet.",
-      };
+  @override
+  State<ListPage> createState() => _ListPageState();
+}
+
+class _ListPageState extends State<ListPage> {
+  late Future<List<TachographDay>> _future;
+
+  @override
+  void initState() {
+    super.initState();
+    _future = tachographRepository.loadDays();
+  }
+
+  Future<void> _reload() async {
+    setState(() {
+      _future = tachographRepository.loadDays();
     });
+    await _future;
+  }
+
+  String _formatDate(DateTime date) {
+    final d = date.toLocal();
+    final day = d.day.toString().padLeft(2, '0');
+    final month = d.month.toString().padLeft(2, '0');
+    final year = d.year.toString();
+    return '$day.$month.$year';
+  }
+
+  String _formatDistance(TachographDay day) {
+    final km = day.distanceKm;
+    if (km < 1) {
+      return 'Keine Fahrstrecke erfasst';
+    }
+    return '$km km gefahren';
   }
 
   @override
   Widget build(BuildContext context) {
-    final items = _generateFakeDates();
     final cs = Theme.of(context).colorScheme;
-    return ListView.builder(
-      padding: EdgeInsets.fromLTRB(
-        context.r.gutter,
-        80,
-        context.r.gutter,
-        context.r.bottomBarH + context.r.gutter,
-      ),
-      itemCount: items.length,
-      itemBuilder: (_, i) {
-        final item = items[i];
-        return Container(
-          margin: const EdgeInsets.only(bottom: 12),
-          decoration: BoxDecoration(
-            color: cs.onSurface.withOpacity(0.06),
-            borderRadius: BorderRadius.circular(18),
-            border: Border.all(color: cs.outlineVariant.withOpacity(0.5)),
+
+    Widget buildList(List<TachographDay> days) {
+      if (days.isEmpty) {
+        return ListView(
+          physics: const AlwaysScrollableScrollPhysics(
+            parent: BouncingScrollPhysics(),
           ),
-          child: ListTile(
-            title: Text(
-              item["title"]!,
-              style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 17),
-            ),
-            subtitle: Text(
-              item["subtitle"]!,
-              style: TextStyle(color: cs.onSurface.withOpacity(0.8)),
-            ),
+          padding: EdgeInsets.fromLTRB(
+            context.r.gutter,
+            80,
+            context.r.gutter,
+            context.r.bottomBarH + context.r.gutter,
           ),
+          children: [
+            Container(
+              padding: const EdgeInsets.all(24),
+              decoration: BoxDecoration(
+                color: cs.onSurface.withOpacity(0.04),
+                borderRadius: BorderRadius.circular(18),
+                border: Border.all(color: cs.outlineVariant.withOpacity(0.5)),
+              ),
+              child: Text(
+                'Noch keine Fahrten vorhanden. Übertrage eine DDD-Datei, '
+                'um hier Tage mit Fahrzeugbewegungen zu sehen.',
+                style: TextStyle(color: cs.onSurface.withOpacity(0.85)),
+              ),
+            ),
+          ],
+        );
+      }
+
+      return ListView.builder(
+        physics: const AlwaysScrollableScrollPhysics(
+          parent: BouncingScrollPhysics(),
+        ),
+        padding: EdgeInsets.fromLTRB(
+          context.r.gutter,
+          80,
+          context.r.gutter,
+          context.r.bottomBarH + context.r.gutter,
+        ),
+        itemCount: days.length,
+        itemBuilder: (_, i) {
+          final day = days[i];
+          return Container(
+            margin: const EdgeInsets.only(bottom: 12),
+            decoration: BoxDecoration(
+              color: cs.onSurface.withOpacity(0.06),
+              borderRadius: BorderRadius.circular(18),
+              border: Border.all(color: cs.outlineVariant.withOpacity(0.5)),
+            ),
+            child: ListTile(
+              onTap: () {
+                _showSnack(
+                  context,
+                  'Details zu ${_formatDate(day.date)} folgen in einem späteren Schritt.',
+                );
+              },
+              title: Text(
+                _formatDate(day.date),
+                style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 17),
+              ),
+              subtitle: Text(
+                _formatDistance(day),
+                style: TextStyle(color: cs.onSurface.withOpacity(0.8)),
+              ),
+            ),
+          );
+        },
+      );
+    }
+
+    return FutureBuilder<List<TachographDay>>(
+      future: _future,
+      builder: (context, snapshot) {
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return Center(
+            child: Padding(
+              padding: EdgeInsets.only(top: 80),
+              child: CupertinoActivityIndicator(
+                color: cs.secondary,
+              ),
+            ),
+          );
+        }
+
+        if (snapshot.hasError) {
+          return RefreshIndicator(
+            color: cs.secondary,
+            onRefresh: _reload,
+            child: ListView(
+              physics: const AlwaysScrollableScrollPhysics(
+                parent: BouncingScrollPhysics(),
+              ),
+              padding: EdgeInsets.fromLTRB(
+                context.r.gutter,
+                80,
+                context.r.gutter,
+                context.r.bottomBarH + context.r.gutter,
+              ),
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(24),
+                  decoration: BoxDecoration(
+                    color: cs.errorContainer.withOpacity(0.25),
+                    borderRadius: BorderRadius.circular(18),
+                    border: Border.all(color: cs.error.withOpacity(0.4)),
+                  ),
+                  child: Text(
+                    'DDD-Datei konnte nicht gelesen werden. '
+                    'Ziehe zum Aktualisieren, um es erneut zu versuchen.',
+                    style: TextStyle(color: cs.onErrorContainer),
+                  ),
+                ),
+              ],
+            ),
+          );
+        }
+
+        final days = snapshot.data ?? const [];
+        return RefreshIndicator(
+          color: cs.secondary,
+          onRefresh: _reload,
+          child: buildList(days),
         );
       },
     );
