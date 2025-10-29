@@ -463,6 +463,14 @@ class NotificationService {
     final Duration ninetyDelay = Duration(
       milliseconds: (effectiveDelay.inMilliseconds * 0.9).round(),
     );
+    );
+    if (halfDelay > Duration.zero && halfDelay < effectiveDelay) {
+      await scheduleNotification(notificationId: id + 1, offset: halfDelay);
+    }
+
+    final Duration ninetyDelay = Duration(
+      milliseconds: (effectiveDelay.inMilliseconds * 0.9).round(),
+    );
     if (ninetyDelay > Duration.zero && ninetyDelay < effectiveDelay) {
       await scheduleNotification(notificationId: id + 2, offset: ninetyDelay);
     }
@@ -1884,6 +1892,7 @@ class _TransferFallback extends StatelessWidget {
 
 /// Verwaltung eines laufenden Transfers inklusive Fortschrittsring und
 /// Dateianforderung per BLE.
+/// Verwaltung eines laufenden Transfers inklusive Fortschrittsring.
 class _TransferView extends StatefulWidget {
   const _TransferView({
     required this.deviceName,
@@ -1993,6 +2002,14 @@ class _TransferViewState extends State<_TransferView> {
         }
       });
     }
+    await transferStorage.setLastTransferNow();
+    // Erinnerung: startet frühestens nach 1 Minute und erzeugt Folgehinweise.
+    await NotificationService.instance.scheduleIn(const Duration(minutes: 1));
+    setState(() {
+      started = true;
+      done = false;
+      runId++;
+    });
   }
 
   void _onFinished() {
