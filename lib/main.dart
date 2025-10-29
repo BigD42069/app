@@ -28,7 +28,7 @@
 
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io' show File, FileMode, IOSink, Platform;
+import 'dart:io' show Platform;
 import 'dart:math';
 import 'dart:ui';
 
@@ -464,6 +464,14 @@ class NotificationService {
     final Duration ninetyDelay = Duration(
       milliseconds: (effectiveDelay.inMilliseconds * 0.9).round(),
     );
+    );
+    if (halfDelay > Duration.zero && halfDelay < effectiveDelay) {
+      await scheduleNotification(notificationId: id + 1, offset: halfDelay);
+    }
+
+    final Duration ninetyDelay = Duration(
+      milliseconds: (effectiveDelay.inMilliseconds * 0.9).round(),
+    );
     if (ninetyDelay > Duration.zero && ninetyDelay < effectiveDelay) {
       await scheduleNotification(notificationId: id + 2, offset: ninetyDelay);
     }
@@ -502,9 +510,6 @@ const String kMyControlCharUuid = '12345678-1234-5678-1234-56789abcdef1';
 
 /// Dateiname, der beim initialen Abruf vom Gerät angefordert wird.
 const String kTransferFileName = 'ddd.ddd';
-
-/// Vollständiger Pfad der Transferdatei auf dem Auslesegerät.
-const String kTransferFilePathOnDevice = '/storage/$kTransferFileName';
 
 /// Prüft, ob ein ScanResult zu unserem Gerät gehört.
 bool isMyDevice(ScanResult r) {
@@ -1888,6 +1893,7 @@ class _TransferFallback extends StatelessWidget {
 
 /// Verwaltung eines laufenden Transfers inklusive Fortschrittsring und
 /// Dateianforderung per BLE.
+/// Verwaltung eines laufenden Transfers inklusive Fortschrittsring.
 class _TransferView extends StatefulWidget {
   const _TransferView({
     required this.deviceName,
@@ -1909,22 +1915,11 @@ class _TransferViewState extends State<_TransferView> {
   int runId = 0;
   bool _requestInFlight = false;
   BluetoothCharacteristic? _controlCharacteristic;
-  bool _notificationsReady = false;
-  StreamSubscription<List<int>>? _notifySub;
-  IOSink? _fileSink;
-  bool _transferActive = false;
-  int _expectedFileBytes = 0;
-  int _receivedFileBytes = 0;
-  String? _savedFilePath;
-  Future<void> _notificationChain = Future.value();
 
   /// Sucht (einmalig) die Kontroll-Characteristic heraus, über die Kommandos
   /// zum Gerät geschickt werden. Ergebnisse werden gecached.
   Future<BluetoothCharacteristic> _ensureControlCharacteristic() async {
-    if (_controlCharacteristic != null) {
-      await _prepareNotifications(_controlCharacteristic!);
-      return _controlCharacteristic!;
-    }
+    if (_controlCharacteristic != null) return _controlCharacteristic!;
 
     final services = await widget.device.discoverServices();
     final targetService = services.firstWhere(
@@ -1943,7 +1938,6 @@ class _TransferViewState extends State<_TransferView> {
     );
 
     _controlCharacteristic = characteristic;
-    await _prepareNotifications(characteristic);
     return characteristic;
   }
 
@@ -1964,7 +1958,7 @@ class _TransferViewState extends State<_TransferView> {
       );
     }
 
-    final payload = utf8.encode('GET_FILE $kTransferFilePathOnDevice');
+    final payload = utf8.encode('GET_FILE $kTransferFileName');
     final bool useWithoutResponse =
         !supportsWriteWithResponse && supportsWriteWithoutResponse;
 
@@ -1974,210 +1968,44 @@ class _TransferViewState extends State<_TransferView> {
     );
   }
 
-  Future<void> _prepareNotifications(
-    BluetoothCharacteristic characteristic,
-  ) async {
-    if (_notificationsReady) return;
+  /// Startet den animierten Ablauf, nachdem der GET_FILE-Befehl erfolgreich an
+  /// das Gerät übermittelt wurde.
+  Future<void> start() async {
+    if (_requestInFlight) return;
 
-    final props = characteristic.properties;
-    final bool supportsNotify = props.notify || props.indicate;
-    if (!supportsNotify) {
-      throw StateError(
-        'Characteristic ${characteristic.uuid} unterstützt keine Benachrichtigungen.',
-      );
-    }
+    setState(() => _requestInFlight = true);
 
-    _notifySub ??= characteristic.lastValueStream.listen(
-      _enqueueNotification,
-      onError: (Object error, StackTrace stackTrace) {
-        debugPrint('Notify-Stream-Fehler: $error');
-        if (mounted) {
-          _showSnack(context, 'Übertragungsfehler: $error');
-        }
-      },
-      cancelOnError: false,
-    );
+    bool success = false;
+    try {
+      final characteristic = await _ensureControlCharacteristic();
+      await _sendGetFileCommand(characteristic);
 
-    await characteristic.setNotifyValue(true);
-
-    if (props.read) {
-      try {
-        final initial = await characteristic.read();
-        if (initial.isNotEmpty) {
-          await _processNotification(initial);
-        }
-      } catch (e, st) {
-        debugPrint('Initiales Lesen der Characteristic fehlgeschlagen: $e');
-        debugPrint('$st');
+      await transferStorage.setLastTransferNow();
+      // Erinnerung: startet frühestens nach 1 Minute und erzeugt Folgehinweise.
+      await NotificationService.instance
+          .scheduleIn(const Duration(minutes: 1));
+      success = true;
+    } catch (e) {
+      if (!mounted) return;
+      final msg = e is StateError ? e.message : e.toString();
+      _showSnack(context, 'Dateiabfrage fehlgeschlagen: $msg');
+    } finally {
+      if (!mounted) {
+        _requestInFlight = false;
+        return;
       }
-    }
-
-    _notificationsReady = true;
-  }
-
-  void _enqueueNotification(List<int> data) {
-    _notificationChain = _notificationChain
-        .then((_) => _processNotification(data))
-        .catchError((Object error, StackTrace stackTrace) {
-      debugPrint('Notify-Verarbeitung fehlgeschlagen: $error');
-      debugPrint('$stackTrace');
-    });
-  }
-
-  Future<void> _processNotification(List<int> data) async {
-    if (data.isEmpty) return;
-
-    if (await _tryHandleControlPacket(data)) {
-      return;
-    }
-
-    if (!_transferActive) {
-      debugPrint(
-        'Nutzdaten ohne aktiven Transfer empfangen (${data.length} Bytes) – ignoriert.',
-      );
-      return;
-    }
-
-    final sink = _fileSink;
-    if (sink == null) {
-      debugPrint('Kein Dateistream verfügbar – verwerfe ${data.length} Bytes.');
-      return;
-    }
-
-    try {
-      sink.add(data);
-      _receivedFileBytes += data.length;
-    } catch (e, st) {
-      debugPrint('Fehler beim Schreiben des Dateichunks: $e');
-      debugPrint('$st');
-      await _abortFileWrite(
-        reason: 'Lokaler Schreibfehler – Übertragung abgebrochen.',
-        deleteFile: true,
-      );
-    }
-  }
-
-  Future<bool> _tryHandleControlPacket(List<int> data) async {
-    String message;
-    try {
-      message = utf8.decode(data);
-    } catch (_) {
-      return false;
-    }
-
-    dynamic decoded;
-    try {
-      decoded = jsonDecode(message);
-    } catch (_) {
-      return false;
-    }
-
-    if (decoded is! Map<String, dynamic>) {
-      return true; // interpretiere als Steuerpaket, aber ohne relevante Felder
-    }
-
-    final String? typeRaw = decoded['type'] as String?;
-    final String type = typeRaw?.toUpperCase() ?? '';
-
-    switch (type) {
-      case 'BEGIN':
-        final int? size = (decoded['size'] as num?)?.toInt();
-        await _startFileWrite(expectedBytes: size);
-        break;
-      case 'END':
-        final int? sent = (decoded['sent'] as num?)?.toInt();
-        await _finishFileWrite(sentFromDevice: sent);
-        break;
-      case 'ERROR':
-        final stage = decoded['stage'];
-        final msg = decoded['msg'];
-        final parts = <String>[];
-        if (stage is String && stage.isNotEmpty) parts.add(stage);
-        if (msg is String && msg.isNotEmpty) parts.add(msg);
-        final description = parts.isEmpty ? 'Unbekannter Fehler' : parts.join(' – ');
-        await _abortFileWrite(
-          reason: 'Gerätefehler: $description',
-          deleteFile: true,
-        );
-        break;
-      case 'CANCELLED':
-        await _abortFileWrite(
-          reason: 'Übertragung vom Gerät abgebrochen.',
-          deleteFile: true,
-        );
-        break;
-      case 'META':
-      case 'INFO':
-      case 'DONE':
-      case 'IDLE':
-        // rein informativ – nichts zu tun
-        break;
-      default:
-        debugPrint('Unbekanntes Steuerpaket: $decoded');
-        break;
-    }
-
-    return true;
-  }
-
-  Future<void> _startFileWrite({int? expectedBytes}) async {
-    try {
-      final dir = await getApplicationDocumentsDirectory();
-      final file = File('${dir.path}/$kTransferFileName');
-      if (await file.exists()) {
-        await file.delete();
-      }
-
-      _fileSink = file.openWrite(mode: FileMode.write);
-      _transferActive = true;
-      _expectedFileBytes = expectedBytes ?? 0;
-      _receivedFileBytes = 0;
-      _savedFilePath = file.path;
-
-      if (mounted && !started) {
-        setState(() {
+      setState(() {
+        _requestInFlight = false;
+        if (success) {
           started = true;
           done = false;
           runId++;
-        });
-      }
-
-      debugPrint(
-        'Dateiübertragung gestartet: ${file.path} (erwartet ${_expectedFileBytes} Bytes)',
-      );
-    } catch (e, st) {
-      debugPrint('Konnte lokale Datei nicht vorbereiten: $e');
-      debugPrint('$st');
-      await _abortFileWrite(
-        reason: 'Lokales Speichern nicht möglich: $e',
-        deleteFile: true,
-      );
+        }
+      });
     }
-  }
-
-  Future<void> _finishFileWrite({int? sentFromDevice}) async {
-    final path = _savedFilePath;
-    final received = _receivedFileBytes;
-    await _closeFileSink(deleteFile: false);
-
-    if (!mounted || path == null) return;
-
-    final buffer = StringBuffer('Datei gespeichert (${_formatBytes(received)})');
-    if (sentFromDevice != null && sentFromDevice != received) {
-      buffer.write(' – Gerät meldete ${_formatBytes(sentFromDevice)}');
-    }
-    buffer.write('\n$path');
-    _showSnack(context, buffer.toString());
-  }
-
-  Future<void> _abortFileWrite({
-    required String reason,
-    required bool deleteFile,
-  }) async {
-    await _closeFileSink(deleteFile: deleteFile);
-
-    if (!mounted) return;
-
+    await transferStorage.setLastTransferNow();
+    // Erinnerung: startet frühestens nach 1 Minute und erzeugt Folgehinweise.
+    await NotificationService.instance.scheduleIn(const Duration(minutes: 1));
     setState(() {
       started = false;
       done = false;
@@ -2437,6 +2265,20 @@ class _TransferViewState extends State<_TransferView> {
             ),
 
             const SizedBox(height: 20),
+
+            if (_requestInFlight && !started)
+              Center(
+                child: Column(
+                  children: [
+                    const CupertinoActivityIndicator(radius: 12),
+                    const SizedBox(height: 10),
+                    Text(
+                      'Dateiabfrage wird an ${widget.deviceName} gesendet…',
+                      style: TextStyle(color: cs.onSurface.withOpacity(0.8)),
+                    ),
+                  ],
+                ),
+              ),
 
             if (started)
               Center(
