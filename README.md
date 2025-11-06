@@ -2,6 +2,14 @@
 
 A new Flutter project.
 
+## Mobile Native Pipeline
+
+Details zur gomobile-Toolchain und zum Flutter-Plugin-Kontrakt sind in den
+folgenden Dokumenten zusammengefasst:
+
+- [`docs/gomobile_tooling.md`](docs/gomobile_tooling.md)
+- [`docs/flutter_plugin_bridge.md`](docs/flutter_plugin_bridge.md)
+
 ## Getting Started
 
 This project is a starting point for a Flutter application.
