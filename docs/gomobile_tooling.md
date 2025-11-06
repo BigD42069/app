@@ -54,10 +54,6 @@ build/gomobile/1.2.0/apple/Tachograph.xcframework
 build/gomobile/1.2.0/checksums.txt
 ```
 
-> Hinweis: Binäre Artefakte werden **nicht** im Git-Repository versioniert. Die
-> Ausgabeordner sind nur dokumentiert, damit lokale Builds konsistent
-> strukturiert werden können.
-
 ### Manuelle Ausführung
 
 Der Workflow, den das Skript automatisiert, lautet:
