@@ -1,29 +1,35 @@
 package com.example.dateiexplorer_tachograph
 
+import go.Seq
 import io.flutter.embedding.engine.plugins.FlutterPlugin
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
 import io.flutter.plugin.common.MethodChannel.MethodCallHandler
 import io.flutter.plugin.common.MethodChannel.Result
+import mobile.NativeError
+import mobile.ParseOptions
+import mobile.Parser
 
 private const val CHANNEL_NAME = "tachograph_native"
 
 class TachographNativePlugin : FlutterPlugin, MethodCallHandler {
     private var channel: MethodChannel? = null
-    private var binding: GomobileBinding? = null
+    private var parser: Parser? = null
 
     override fun onAttachedToEngine(binding: FlutterPlugin.FlutterPluginBinding) {
+        Seq.setContext(binding.applicationContext)
         channel = MethodChannel(binding.binaryMessenger, CHANNEL_NAME).also {
             it.setMethodCallHandler(this)
         }
-        this.binding = GomobileBinding.tryCreate(binding.applicationContext)
+        parser = Parser.newParser()
     }
 
     override fun onDetachedFromEngine(binding: FlutterPlugin.FlutterPluginBinding) {
         channel?.setMethodCallHandler(null)
         channel = null
-        this.binding?.close()
-        this.binding = null
+        parser?.close()
+        parser = null
+        Seq.destroy()
     }
 
     override fun onMethodCall(call: MethodCall, result: Result) {
@@ -36,10 +42,10 @@ class TachographNativePlugin : FlutterPlugin, MethodCallHandler {
 
     private fun handleParse(call: MethodCall, result: Result) {
         val args = call.arguments as? Map<*, *>
-        if (args == null) {
-            result.error("invalid-arguments", "Missing arguments", null)
-            return
-        }
+            ?: run {
+                result.error("invalid-arguments", "Missing arguments", null)
+                return
+            }
 
         val payload = args["payload"] as? ByteArray
         val source = args["source"] as? String
@@ -52,29 +58,44 @@ class TachographNativePlugin : FlutterPlugin, MethodCallHandler {
             return
         }
 
-        val mobileBinding = binding
-        if (mobileBinding == null) {
-            result.error(
-                "missing-native-lib",
-                "Gomobile-Bindings wurden nicht eingebunden. Bitte AAR/XCFramework laut docs/gomobile_tooling.md bauen und in das Projekt einbinden.",
-                null,
-            )
+        val parser = parser
+        if (parser == null) {
+            result.error("parser-error", "Parser not initialised", null)
             return
         }
 
-        when (val outcome = mobileBinding.parse(payload, source, verify, pksPath, timeout)) {
-            is GomobileBinding.ParseOutcome.Success -> result.success(outcome.payload)
-            is GomobileBinding.ParseOutcome.NativeFailure -> result.error(outcome.code, outcome.message, null)
-            is GomobileBinding.ParseOutcome.UnexpectedFailure -> result.error(
-                "parser-error",
-                outcome.error.message ?: "Unexpected native failure",
-                null,
+        try {
+            val options = ParseOptions().apply {
+                setSource(source)
+                setVerify(verify)
+                setPKSPath(pksPath)
+                setTimeoutMs(timeout)
+            }
+            val parseResult = parser.parseDdd(payload, options)
+            val response = hashMapOf<String, Any?>(
+                "status" to parseResult.status(),
+                "json" to parseResult.json().orEmpty().ifEmpty { null },
+                "verificationLog" to parseResult.verificationLog().orEmpty().ifEmpty { null },
+                "errorDetails" to parseResult.errorDetails().orEmpty().ifEmpty { null },
             )
+            result.success(response)
+        } catch (error: NativeError) {
+            result.error(error.code(), error.message, null)
+        } catch (throwable: Throwable) {
+            result.error("parser-error", throwable.message ?: "Unexpected native failure", null)
         }
     }
 
     private fun handleCancel(result: Result) {
-        binding?.cancel()
+        parser?.cancelActiveParse()
         result.success(null)
     }
 }
+
+private fun mobile.ParseResult.status(): String = getStatus()
+
+private fun mobile.ParseResult.json(): String? = getJson()
+
+private fun mobile.ParseResult.verificationLog(): String? = getVerificationLog()
+
+private fun mobile.ParseResult.errorDetails(): String? = getErrorDetails()

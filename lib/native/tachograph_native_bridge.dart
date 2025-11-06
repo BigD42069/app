@@ -101,9 +101,6 @@ class TachographNativeBridge {
         case 'cancelled':
           code = TachographNativeErrorCode.cancelled;
           break;
-        case 'missing-native-lib':
-          code = TachographNativeErrorCode.unavailable;
-          break;
         case 'invalid-arguments':
           code = TachographNativeErrorCode.protocol;
           break;
@@ -151,13 +148,7 @@ class TachographParseResponse {
 }
 
 /// Fehlerkategorien der nativen Brücke.
-enum TachographNativeErrorCode {
-  parserError,
-  timeout,
-  cancelled,
-  protocol,
-  unavailable,
-}
+enum TachographNativeErrorCode { parserError, timeout, cancelled, protocol }
 
 /// Strukturierte Exception für Brücken-Fehler.
 class TachographNativeException implements Exception {

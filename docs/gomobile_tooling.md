@@ -35,12 +35,6 @@ xcode-select -p
 xcodebuild -version
 ```
 
-> Hinweis zur CI-/Container-Umgebung: Der Standard-Go-Modul-Proxy ist dort
-> nicht erreichbar. Installieren Sie `gomobile` und weitere Abhängigkeiten
-> deshalb lokal mit aktivem Internetzugang (z. B. `go install` auf Ihrem
-> Entwicklungsrechner) oder stellen Sie einen internen Proxy bereit. Anschließend
-> kann das Build-Skript mit den lokal installierten Tools ausgeführt werden.
-
 ## Build-Skript verwenden
 
 Das Skript [`tool/build_gomobile.sh`](../tool/build_gomobile.sh) kapselt die
@@ -59,10 +53,6 @@ build/gomobile/1.2.0/android/tachograph-1.2.0.aar
 build/gomobile/1.2.0/apple/Tachograph.xcframework
 build/gomobile/1.2.0/checksums.txt
 ```
-
-> Hinweis: Binäre Artefakte werden **nicht** im Git-Repository versioniert. Die
-> Ausgabeordner sind nur dokumentiert, damit lokale Builds konsistent
-> strukturiert werden können.
 
 ### Manuelle Ausführung
 
