@@ -59,24 +59,5 @@ Die native Seite liefert eine Map mit folgenden Schlüsseln:
 - Zusätzlich simulieren Mocks (`MethodChannel.setMockMethodCallHandler`) den
   Cancel-Pfad.
 
-### JSON-Payload
-
-Bei erfolgreicher Analyse enthält das `json`-Feld eine Struktur mit folgenden
-Schlüsseln:
-
-| Schlüssel      | Typ            | Beschreibung |
-| -------------- | -------------- | ------------ |
-| `bytes`        | `int`          | Länge der DDD-Datei |
-| `source`       | `String`       | Übernommener `source`-Parameter |
-| `sha256`       | `String`       | Prüfsumme der Rohdatei |
-| `generatedAt`  | `String`       | ISO-Zeitstempel der Generierung |
-| `totalDays`    | `int`          | Anzahl der extrahierten Tage |
-| `days`         | `List<Object>` | Liste einzelner Tage |
-
-Jedes Element in `days` besitzt die Schlüssel `date` (`YYYY-MM-DD`),
-`startOdometer`, `endOdometer` sowie `distanceKm`. Die Logik entspricht der
-bisherigen Dart-Implementierung und berücksichtigt 24-Bit-Überläufe des
-Kilometerzählers.
-
 Der „Done“-Zustand ist erreicht, wenn die oben genannten Signaturen stabil sind
 und die nativen Implementierungen alle Pfade bedienen.
