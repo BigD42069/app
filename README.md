@@ -10,15 +10,18 @@ folgenden Dokumenten zusammengefasst:
 - [`docs/gomobile_tooling.md`](docs/gomobile_tooling.md)
 - [`docs/flutter_plugin_bridge.md`](docs/flutter_plugin_bridge.md)
 
-## Getting Started
+## Native gomobile-Artefakte einbinden
 
-This project is a starting point for a Flutter application.
+Die von der gomobile-Toolchain erzeugten Binärartefakte müssen an die vom
+Projekt erwarteten Stellen kopiert werden, damit sie von Gradle bzw. Xcode
+gefunden und eingebunden werden:
 
-A few resources to get you started if this is your first Flutter project:
+| Plattform | Erwarteter Pfad | Hinweise |
+|-----------|-----------------|----------|
+| Android   | `android/app/libs/android.lib.aar` | Die `android/app/build.gradle.kts` lädt das AAR direkt aus diesem Verzeichnis via `implementation(files("libs/android.lib.aar"))`. Du musst die Datei genau so benennen und lokal einspielen. |
+| iOS       | `ios/Frameworks/ios.xcframework` | Das Xcode-Projekt referenziert das Framework relativ zum `Frameworks/`-Ordner (`path = ../Frameworks/ios.xcframework`). Kopiere den kompletten `ios.xcframework`-Ordner dort hinein, bevor du Xcode startest. |
 
-- [Lab: Write your first Flutter app](https://docs.flutter.dev/get-started/codelab)
-- [Cookbook: Useful Flutter samples](https://docs.flutter.dev/cookbook)
+Die beiden Ordner sind per `.gitignore` von Commits ausgeschlossen, damit keine großen Binärdateien im Repository landen. Lege die Artefakte deshalb nur lokal ab oder verwende ein separates Artefakt-Repository.
 
-For help getting started with Flutter development, view the
-[online documentation](https://docs.flutter.dev/), which offers tutorials,
-samples, guidance on mobile development, and a full API reference.
+Weitere Details zum Build-Pipeline-Kontrakt findest du in den Dokumenten unter
+[`docs/`](docs/).

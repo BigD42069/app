@@ -14,3 +14,13 @@ ios/Pods/
 
 # OS
 .DS_Store
+
+# Native artefacts (drop-ins, do not commit)
+android/app/libs/*.aar
+android/app/libs/*.jar
+
+ios/Frameworks/*.xcframework/
+ios/Frameworks/*.framework/
+ios/Frameworks/*/*.framework
+!android/app/libs/README.md
+!ios/Frameworks/README.md
