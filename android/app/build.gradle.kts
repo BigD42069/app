@@ -48,7 +48,7 @@ dependencies {
     coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.0.4")
 
     // Native gomobile artefact (android.lib.aar) dropped into app/libs
-    implementation(files("libs/Androidlib.aar"))
+    implementation(files("libs/android.lib.aar"))
 
     // deine übrigen Dependencies kommen hier mit implementation("group:artifact:version")
     // z.B.: implementation("androidx.core:core-ktx:1.13.1")
