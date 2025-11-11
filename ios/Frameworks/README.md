@@ -1,6 +1,6 @@
 # iOS native framework drop-in
 
-Place the generated `ios.xcframework` directory from the gomobile build output inside this folder before running Xcode.
+Place the generated `Mobile.xcframework` directory from the gomobile build output inside this folder before running Xcode.
 
 The Xcode project links and embeds `ios/Frameworks/ios.xcframework` (relative to the repository root).
 Keep the architecture slices intact (`ios-arm64/Mobile.framework` for devices,
