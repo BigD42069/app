@@ -1,5 +1,6 @@
 import Flutter
 import Foundation
+import ObjectiveC.runtime
 
 private let channelName = "tachograph_native"
 
@@ -254,8 +255,10 @@ private final class GomobileBinding {
       guard parser.responds(to: selector) else {
         continue
       }
-      let method = parser.method(for: selector)
-      let function = unsafeBitCast(method, to: ParseFunction.self)
+      guard let implementation = class_getMethodImplementation(type(of: parser), selector) else {
+        continue
+      }
+      let function = unsafeBitCast(implementation, to: ParseFunction.self)
       return (selector, function)
     }
 
@@ -305,24 +308,33 @@ private final class GomobileBinding {
   }
 
   private static func invoke(selector: Selector, on object: NSObject, with value: Any?) {
-    guard let methodSignature = object.methodSignature(for: selector) else {
+    guard let method = class_getInstanceMethod(type(of: object), selector) else {
       object.perform(selector, with: value)
       return
     }
 
-    let argumentCount = methodSignature.numberOfArguments
+    let argumentCount = method_getNumberOfArguments(method)
     guard argumentCount >= 3 else {
       object.perform(selector, with: value)
       return
     }
 
-    let argumentType = String(cString: methodSignature.getArgumentType(at: 2))
+    guard let argumentCString = method_copyArgumentType(method, 2) else {
+      object.perform(selector, with: value)
+      return
+    }
+    defer { free(argumentCString) }
+
+    let argumentType = String(cString: argumentCString)
 
     switch argumentType {
     case "B", "c":
       typealias BoolSetter = @convention(c) (AnyObject, Selector, Bool) -> Void
-      let method = object.method(for: selector)
-      let function = unsafeBitCast(method, to: BoolSetter.self)
+      guard let implementation = class_getMethodImplementation(type(of: object), selector) else {
+        object.perform(selector, with: value)
+        return
+      }
+      let function = unsafeBitCast(implementation, to: BoolSetter.self)
       if let boolValue = value as? Bool {
         function(object, selector, boolValue)
       } else if let number = value as? NSNumber {
@@ -330,8 +342,11 @@ private final class GomobileBinding {
       }
     case "q", "Q", "l", "L", "i", "I", "s", "S":
       typealias IntSetter = @convention(c) (AnyObject, Selector, Int64) -> Void
-      let method = object.method(for: selector)
-      let function = unsafeBitCast(method, to: IntSetter.self)
+      guard let implementation = class_getMethodImplementation(type(of: object), selector) else {
+        object.perform(selector, with: value)
+        return
+      }
+      let function = unsafeBitCast(implementation, to: IntSetter.self)
       if let number = value as? NSNumber {
         function(object, selector, number.int64Value)
       } else if let intValue = value as? Int64 {
@@ -341,8 +356,11 @@ private final class GomobileBinding {
       }
     case "d", "f":
       typealias DoubleSetter = @convention(c) (AnyObject, Selector, Double) -> Void
-      let method = object.method(for: selector)
-      let function = unsafeBitCast(method, to: DoubleSetter.self)
+      guard let implementation = class_getMethodImplementation(type(of: object), selector) else {
+        object.perform(selector, with: value)
+        return
+      }
+      let function = unsafeBitCast(implementation, to: DoubleSetter.self)
       if let number = value as? NSNumber {
         function(object, selector, number.doubleValue)
       } else if let doubleValue = value as? Double {
@@ -355,13 +373,19 @@ private final class GomobileBinding {
     default:
       if let boolValue = value as? Bool {
         typealias BoolSetter = @convention(c) (AnyObject, Selector, Bool) -> Void
-        let method = object.method(for: selector)
-        let function = unsafeBitCast(method, to: BoolSetter.self)
+        guard let implementation = class_getMethodImplementation(type(of: object), selector) else {
+          object.perform(selector, with: value)
+          return
+        }
+        let function = unsafeBitCast(implementation, to: BoolSetter.self)
         function(object, selector, boolValue)
       } else if let number = value as? NSNumber {
         typealias IntSetter = @convention(c) (AnyObject, Selector, Int64) -> Void
-        let method = object.method(for: selector)
-        let function = unsafeBitCast(method, to: IntSetter.self)
+        guard let implementation = class_getMethodImplementation(type(of: object), selector) else {
+          object.perform(selector, with: value)
+          return
+        }
+        let function = unsafeBitCast(implementation, to: IntSetter.self)
         function(object, selector, number.int64Value)
       } else {
         object.perform(selector, with: value)
@@ -383,12 +407,19 @@ private final class GomobileBinding {
     for name in selectors {
       let selector = NSSelectorFromString(name)
       if object.responds(to: selector) {
-        if let signature = object.methodSignature(for: selector) {
-          let returnType = String(cString: signature.methodReturnType)
+        if let method = class_getInstanceMethod(type(of: object), selector) {
+          guard let returnCString = method_copyReturnType(method) else {
+            continue
+          }
+          defer { free(returnCString) }
+
+          let returnType = String(cString: returnCString)
           if returnType == "B" || returnType == "c" {
             typealias BoolFunction = @convention(c) (AnyObject, Selector) -> Bool
-            let method = object.method(for: selector)
-            let function = unsafeBitCast(method, to: BoolFunction.self)
+            guard let implementation = class_getMethodImplementation(type(of: object), selector) else {
+              continue
+            }
+            let function = unsafeBitCast(implementation, to: BoolFunction.self)
             return function(object, selector)
           }
           if returnType == "@" {
