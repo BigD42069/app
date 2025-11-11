@@ -81,6 +81,9 @@ Future<void> main() async {
   //    ändern und sofort eine Aktualisierung triggern.
   final themeController = ThemeController(initialPalette, themeStorage);
 
+  // --- App-weites Signal, wenn neue DDD-Datei gespeichert wurde ---
+  final ValueNotifier<int> dddInboxVersion = ValueNotifier<int>(0);
+
   runApp(
     ThemeProvider(controller: themeController, child: const KalenderApp()),
   );
@@ -155,8 +158,8 @@ class ThemeProvider extends InheritedNotifier<ThemeController> {
   const ThemeProvider({
     super.key,
     required ThemeController controller,
-    required Widget child,
-  }) : super(notifier: controller, child: child);
+    required super.child,
+  }) : super(notifier: controller);
 
   /// Lookup-Helfer, der den Controller aus dem Widgetbaum zieht. Durch das
   /// assert fällt ein fehlender Provider sofort im Debug-Modus auf.
@@ -235,8 +238,11 @@ class AuthStorage {
   }
 }
 
-/// Globale Instanz, damit View-Modelle unkompliziert darauf zugreifen können.
 final authStorage = AuthStorage();
+final transferStorage = TransferStorage();
+
+// 👇 DIESE ZEILE FEHLT BEI DIR
+final ValueNotifier<int> dddInboxVersion = ValueNotifier<int>(0);
 
 class TransferStorage {
   static const _kLastTransferAt = 'last_transfer_at';
@@ -256,9 +262,6 @@ class TransferStorage {
     return DateTime.fromMillisecondsSinceEpoch(ms);
   }
 }
-
-/// Merkt sich pro Gerät den Zeitpunkt der letzten Datenübertragung.
-final transferStorage = TransferStorage();
 
 // ===== NotificationService (DROP-IN) =====
 class NotificationService {
@@ -626,7 +629,7 @@ class KalenderApp extends StatelessWidget {
       builder: (context, _) {
         final accent = themeCtrl.palette.accent;
 
-        ThemeData _mkTheme(Brightness b) {
+        ThemeData mkTheme(Brightness b) {
           // Basis-ColorScheme (Material), danach gezielt überschreiben
           final csSeed = ColorScheme.fromSeed(seedColor: accent, brightness: b);
 
@@ -640,10 +643,8 @@ class KalenderApp extends StatelessWidget {
           if (b == Brightness.dark) {
             // === DARK: exakt wie dein „vorher“ – tiefschwarz, kein Grau
             final cs = csSeed.copyWith(
-              background: Colors.black,
               surface: const Color(0xFF121212),
-              surfaceVariant: const Color(0xFF1E1E1E),
-              onBackground: onBlack,
+              surfaceContainerHighest: const Color(0xFF1E1E1E),
               onSurface: onBlack,
               outlineVariant: Colors.white24,
               secondary: accent,
@@ -658,8 +659,8 @@ class KalenderApp extends StatelessWidget {
               fontFamily:
                   const CupertinoThemeData().textTheme.textStyle.fontFamily,
               textTheme: baseText.apply(
-                bodyColor: cs.onBackground,
-                displayColor: cs.onBackground,
+                bodyColor: cs.onSurface,
+                displayColor: cs.onSurface,
               ),
               dividerTheme: const DividerThemeData(
                 color: Colors.white12,
@@ -670,10 +671,8 @@ class KalenderApp extends StatelessWidget {
 
           // === LIGHT: klassisch Weiß/Schwarz (kein Beige)
           final cs = csSeed.copyWith(
-            background: Colors.white,
             surface: Colors.white,
-            surfaceVariant: const Color(0xFFF2F2F2),
-            onBackground: Colors.black,
+            surfaceContainerHighest: const Color(0xFFF2F2F2),
             onSurface: Colors.black,
             outlineVariant: Colors.black12,
             secondary: accent,
@@ -688,8 +687,8 @@ class KalenderApp extends StatelessWidget {
             fontFamily:
                 const CupertinoThemeData().textTheme.textStyle.fontFamily,
             textTheme: baseText.apply(
-              bodyColor: cs.onBackground,
-              displayColor: cs.onBackground,
+              bodyColor: cs.onSurface,
+              displayColor: cs.onSurface,
             ),
             dividerTheme: const DividerThemeData(
               color: Colors.black12,
@@ -698,8 +697,8 @@ class KalenderApp extends StatelessWidget {
           );
         }
 
-        final light = _mkTheme(Brightness.light);
-        final dark = _mkTheme(Brightness.dark);
+        final light = mkTheme(Brightness.light);
+        final dark = mkTheme(Brightness.dark);
 
         return MaterialApp(
           title: 'Kalender',
@@ -792,7 +791,7 @@ class _ShellState extends State<Shell> with WidgetsBindingObserver {
 
     return Scaffold(
       resizeToAvoidBottomInset: false,
-      backgroundColor: Theme.of(context).colorScheme.background,
+      backgroundColor: Theme.of(context).colorScheme.surface,
       body: GestureDetector(
         behavior: HitTestBehavior.translucent,
         onTap: () => FocusManager.instance.primaryFocus?.unfocus(),
@@ -1048,98 +1047,27 @@ class ListPage extends StatefulWidget {
 }
 
 class _ListPageState extends State<ListPage> {
-  final DddFileRepository _repository = const DddFileRepository();
-  late Future<List<DddDayEntry>> _future;
+  late final VoidCallback _inboxListener;
 
   @override
   void initState() {
     super.initState();
-    _future = _repository.loadDrivingDays();
-  }
 
-  Future<void> _refresh() async {
-    setState(() {
-      _future = _repository.loadDrivingDays();
-    });
-    await _future;
+    // Sobald eine neue DDD gespeichert wurde → Liste neu laden
+    _inboxListener = () {
+      setState(() {});
+    };
+    dddInboxVersion.addListener(_inboxListener);
   }
 
   @override
-  Widget build(BuildContext context) {
-    final cs = Theme.of(context).colorScheme;
-    return FutureBuilder<List<DddDayEntry>>(
-      future: _future,
-      builder: (context, snapshot) {
-        if (snapshot.connectionState == ConnectionState.waiting &&
-            !snapshot.hasData) {
-          return const Center(child: CircularProgressIndicator());
-        }
+  void dispose() {
+    dddInboxVersion.removeListener(_inboxListener);
+    super.dispose();
+  }
 
-        if (snapshot.hasError) {
-          return RefreshIndicator(
-            onRefresh: _refresh,
-            child: _buildMessageList(
-              context,
-              icon: CupertinoIcons.exclamationmark_triangle,
-              title: 'Fehler beim Lesen der Datei',
-              subtitle:
-                  'Die übertragene DDD-Datei konnte nicht ausgewertet werden.',
-            ),
-          );
-        }
-
-        final items = snapshot.data ?? const <DddDayEntry>[];
-        if (items.isEmpty) {
-          return RefreshIndicator(
-            onRefresh: _refresh,
-            child: _buildMessageList(
-              context,
-              icon: CupertinoIcons.doc_text,
-              title: 'Keine Fahrten gefunden',
-              subtitle:
-                  'Übertrage eine DDD-Datei mit Fahrten – Tage mit Bewegung werden hier angezeigt.',
-            ),
-          );
-        }
-
-        return RefreshIndicator(
-          onRefresh: _refresh,
-          child: ListView.builder(
-            padding: EdgeInsets.fromLTRB(
-              context.r.gutter,
-              80,
-              context.r.gutter,
-              context.r.bottomBarH + context.r.gutter,
-            ),
-            itemCount: items.length,
-            itemBuilder: (_, i) {
-              final entry = items[i];
-              return Container(
-                margin: const EdgeInsets.only(bottom: 12),
-                decoration: BoxDecoration(
-                  color: cs.onSurface.withOpacity(0.06),
-                  borderRadius: BorderRadius.circular(18),
-                  border: Border.all(color: cs.outlineVariant.withOpacity(0.5)),
-                ),
-                child: ListTile(
-                  title: Text(
-                    entry.formattedDate,
-                    style: const TextStyle(
-                      fontWeight: FontWeight.w600,
-                      fontSize: 17,
-                    ),
-                  ),
-                  subtitle: Text(
-                    entry.buildSummary(),
-                    style: TextStyle(color: cs.onSurface.withOpacity(0.8)),
-                  ),
-                ),
-              );
-            },
-          ),
-        );
-      },
-    );
+  Future<void> _refresh() async {
+    setState(() {});
   }
 
   Widget _buildMessageList(
@@ -1158,11 +1086,7 @@ class _ListPageState extends State<ListPage> {
         context.r.bottomBarH + context.r.gutter,
       ),
       children: [
-        Icon(
-          icon,
-          size: 56,
-          color: cs.onSurface.withOpacity(0.7),
-        ),
+        Icon(icon, size: 56, color: cs.onSurface.withOpacity(0.7)),
         const SizedBox(height: 16),
         Text(
           title,
@@ -1486,7 +1410,7 @@ class _IntroView extends StatelessWidget {
         child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 14),
           decoration: BoxDecoration(
-            color: cs.surfaceVariant,
+            color: cs.surfaceContainerHighest,
             borderRadius: BorderRadius.circular(context.r.pillRadius()),
             border: Border.all(color: cs.outlineVariant),
           ),
@@ -1616,7 +1540,7 @@ class _ResultsView extends StatelessWidget {
             child: Container(
               padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
               decoration: BoxDecoration(
-                color: cs.surfaceVariant,
+                color: cs.surfaceContainerHighest,
                 borderRadius: BorderRadius.circular(context.r.pillRadius()),
                 border: Border.all(color: cs.outlineVariant),
               ),
@@ -1798,7 +1722,7 @@ class _BtDeviceRow extends StatelessWidget {
           child: Container(
             padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
             decoration: BoxDecoration(
-              color: cs.surfaceVariant,
+              color: cs.surfaceContainerHighest,
               borderRadius: BorderRadius.circular(context.r.pillRadius()),
               border: Border.all(color: cs.outlineVariant),
             ),
@@ -1870,7 +1794,7 @@ class _DeviceRow extends StatelessWidget {
           child: Container(
             padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
             decoration: BoxDecoration(
-              color: cs.surfaceVariant,
+              color: cs.surfaceContainerHighest,
               borderRadius: BorderRadius.circular(context.r.pillRadius()),
               border: Border.all(color: cs.outlineVariant),
             ),
@@ -1914,7 +1838,7 @@ class _TransferFallback extends StatelessWidget {
             child: Container(
               padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
               decoration: BoxDecoration(
-                color: cs.surfaceVariant,
+                color: cs.surfaceContainerHighest,
                 borderRadius: BorderRadius.circular(24),
                 border: Border.all(color: cs.outlineVariant),
               ),
@@ -1985,13 +1909,12 @@ class _TransferView extends StatefulWidget {
   State<_TransferView> createState() => _TransferViewState();
 }
 
-/// Kümmert sich um Animationen, State und Übergänge für den Transferbereich.
 class _TransferViewState extends State<_TransferView> {
   // UI-State
-  bool started = false; // zeigt den Ring
-  bool done = false; // Ring hat "Fertig"
-  int runId = 0; // damit der Ring neu startet
-  bool _requestInFlight = false; // Button/Spinner-Disable
+  bool started = false; // Ring sichtbar
+  bool done = false; // Ring zeigt "Fertig"
+  int runId = 0; // Ring neu starten
+  bool _requestInFlight = false;
 
   // BLE
   BluetoothCharacteristic? _ctrlChar;
@@ -2012,43 +1935,30 @@ class _TransferViewState extends State<_TransferView> {
     super.dispose();
   }
 
-  // --- Hilfsfunktionen: Verbindung, Discovery, Notify-Setup -----------------
+  // --- BLE Hilfen -----------------------------------------------------------
 
-  /// Stelle sicher, dass wir wirklich connected sind.
-  /// Wenn iOS die Verbindung weggeschoben hat, verbinden wir neu und warten.
   Future<void> _ensureConnected() async {
     var state = await widget.device.connectionState.first;
-
     if (state != BluetoothConnectionState.connected) {
       try {
         await widget.device.connect(timeout: const Duration(seconds: 8));
-      } catch (_) {
-        // "already connected" usw. ignorieren.
-      }
-
-      // jetzt BLOCKEN bis der Adapter sagt "connected"
+      } catch (_) {}
       await widget.device.connectionState
           .where((s) => s == BluetoothConnectionState.connected)
           .first;
     }
   }
 
-  /// Sucht unseren Service + unsere eine Characteristic (write+notify).
-  /// cached das Ergebnis in _ctrlChar.
   Future<void> _prepareCtrlChar() async {
     if (_ctrlChar != null) return;
-
     await _ensureConnected();
-
     final services = await widget.device.discoverServices();
 
-    // Service 12345678-1234-5678-1234-56789abcdef0
     final service = services.firstWhere(
       (s) => s.uuid.toString().toLowerCase() == kMyServiceUuid.toLowerCase(),
       orElse: () => throw StateError('Service $kMyServiceUuid nicht gefunden.'),
     );
 
-    // Characteristic 12345678-1234-5678-1234-56789abcdef1
     final characteristic = service.characteristics.firstWhere(
       (c) =>
           c.uuid.toString().toLowerCase() == kMyControlCharUuid.toLowerCase(),
@@ -2060,24 +1970,14 @@ class _TransferViewState extends State<_TransferView> {
     _ctrlChar = characteristic;
   }
 
-  /// Abonniert Notifications auf der Control-Characteristic.
-  /// Das ist entscheidend, weil dein ESP32 erst DANN ctrl_notify_enabled=true setzt
-  /// und anfängt BEGIN / Bytes / END zu pushen.
   Future<void> _ensureNotifyListener() async {
     await _prepareCtrlChar();
     final c = _ctrlChar!;
-    if (_notifySub != null) return; // schon dran
+    if (_notifySub != null) return;
 
-    // nur wenn notify/indicate erlaubt ist
     if (c.properties.notify || c.properties.indicate) {
-      _notifySub = c.onValueReceived.listen((data) {
-        _onDataFromDevice(data);
-      });
-
-      // automatisch kündigen, falls BLE-Verbindung abreißt
+      _notifySub = c.onValueReceived.listen(_onDataFromDevice);
       widget.device.cancelWhenDisconnected(_notifySub!);
-
-      // CCC auf dem ESP setzen -> ctrl_notify_enabled = true
       await c.setNotifyValue(true);
     } else {
       throw StateError(
@@ -2086,15 +1986,8 @@ class _TransferViewState extends State<_TransferView> {
     }
   }
 
-  // --- Datei-Empfang --------------------------------------------------------
+  // --- Datenpfad ------------------------------------------------------------
 
-  /// Wir bekommen vom ESP32 zwei Arten von Paketen über dieselbe Characteristic:
-  /// 1. JSON-Text (BEGIN/END/ERROR/DONE/...)
-  /// 2. rohe Binär-Bytes (Dateiinhalt)
-  ///
-  /// Heuristik:
-  ///   - beginnt das Paket mit '{' → JSON
-  ///   - sonst → Binärchunk
   Future<void> _onDataFromDevice(List<int> bytes) async {
     if (bytes.isEmpty) return;
 
@@ -2103,20 +1996,14 @@ class _TransferViewState extends State<_TransferView> {
       final msg = utf8.decode(bytes, allowMalformed: true);
       _handleJsonMessage(msg);
     } else {
-      // Binärdaten -> in die Datei schreiben
       if (_transferActive && _fileSink != null) {
         _fileSink!.add(bytes);
         _receivedFileBytes += bytes.length;
-      } else {
-        debugPrint(
-          'WARN: Binärdaten empfangen, aber kein aktiver Transfer. '
-          '(${bytes.length} bytes verworfen)',
-        );
+        setState(() {}); // Fortschritt sichtbar
       }
     }
   }
 
-  /// Verarbeitet BEGIN / END / ERROR usw.
   void _handleJsonMessage(String msg) {
     Map<String, dynamic>? obj;
     try {
@@ -2153,18 +2040,18 @@ class _TransferViewState extends State<_TransferView> {
       return;
     }
 
+    // INFO/META: ignorieren bzw. loggen
     if (type == 'INFO' || type == 'META') {
-      // rein informativ -> loggen
-      debugPrint('INFO/META vom Gerät: $msg');
-      return;
+      debugPrint('INFO/META: $msg');
     }
   }
 
-  /// BEGIN kam rein -> neue Ausgabedatei anlegen + Fortschrittsring starten.
   Future<void> _startNewFileSink(int expectedBytes) async {
     final dir = await getApplicationDocumentsDirectory();
     final ts = DateTime.now().millisecondsSinceEpoch;
-    final path = '${dir.path}/tachograph_$ts.ddd';
+
+    // WICHTIG: Großbuchstaben-Extension (Parser filtern oft strikt)
+    final path = '${dir.path}/tachograph_$ts.DDD';
 
     final file = File(path);
     final sink = file.openWrite();
@@ -2177,15 +2064,14 @@ class _TransferViewState extends State<_TransferView> {
 
     if (!mounted) return;
     setState(() {
-      started = true; // Ring sichtbar
+      started = true;
       done = false;
       runId++;
     });
 
-    debugPrint('Transfer START: -> $path ($expectedBytes bytes erwartet)');
+    debugPrint('Transfer START -> $path ($expectedBytes bytes erwartet)');
   }
 
-  /// END/DONE/ERROR kam rein oder wir räumen auf.
   Future<void> _finishTransfer({required bool success}) async {
     final sink = _fileSink;
     final path = _savedFilePath;
@@ -2205,25 +2091,20 @@ class _TransferViewState extends State<_TransferView> {
     if (!mounted) return;
     setState(() {
       done = success;
-      // Ring bleibt sichtbar und zeigt ggf. "Fertig"
-      // Du kannst hier auch started=false setzen, wenn du den Ring sofort
-      // ausblenden willst.
     });
 
     if (success && path != null) {
       _showSnack(context, 'Datei gespeichert: $path ($_receivedFileBytes B)');
+      // → ListPage informieren: neu laden
+      dddInboxVersion.value++;
     } else if (!success && path != null) {
-      // optional: angefangene Datei wegwerfen
       try {
         final f = File(path);
-        if (await f.exists()) {
-          await f.delete();
-        }
+        if (await f.exists()) await f.delete();
       } catch (_) {}
     }
   }
 
-  /// Falls wir manuell aufräumen wollen (z.B. dispose()):
   Future<void> _closeFileSink({required bool deleteFile}) async {
     final sink = _fileSink;
     final path = _savedFilePath;
@@ -2243,9 +2124,7 @@ class _TransferViewState extends State<_TransferView> {
     if (deleteFile && path != null) {
       try {
         final f = File(path);
-        if (await f.exists()) {
-          await f.delete();
-        }
+        if (await f.exists()) await f.delete();
       } catch (e) {
         debugPrint('Fehler beim Löschen $path: $e');
       }
@@ -2256,31 +2135,17 @@ class _TransferViewState extends State<_TransferView> {
     _savedFilePath = null;
   }
 
-  // --- Button-Handler: Dateiübertragung starten ----------------------------
+  // --- Start-Button ---------------------------------------------------------
 
-  /// Wird von "Dateiübertragung starten" aufgerufen.
-  ///
-  /// Ablauf:
-  /// 1. sicherstellen, dass wir verbunden sind
-  /// 2. Characteristic finden
-  /// 3. Notifications aktivieren (damit ESP losschicken darf)
-  /// 4. Befehl `GET_FILE /storage/ddd.ddd` hinschreiben
-  /// 5. Erinnerungs-Notification für später planen
   Future<void> start() async {
     if (_requestInFlight) return;
-
     setState(() => _requestInFlight = true);
 
     try {
-      // 1+2
       await _prepareCtrlChar();
-
-      // 3
       await _ensureNotifyListener();
 
-      // 4 -> Befehl an ESP
-      // Wichtig: Pfad MUSS so existieren wie auf dem ESP (SPIFFS unter "/storage")
-      final cmd = 'GET_FILE $kTransferFileName';
+      final cmd = 'GET_FILE $kTransferFileName'; // z. B. /storage/ddd.DDD
       final data = utf8.encode(cmd);
 
       final props = _ctrlChar!.properties;
@@ -2298,34 +2163,19 @@ class _TransferViewState extends State<_TransferView> {
         withoutResponse: !canWriteWithRsp && canWriteNoRsp,
       );
 
-      // 5: lokale Erinnerung für "denk dran, wieder übertragen"
       await transferStorage.setLastTransferNow();
       await NotificationService.instance.scheduleIn(const Duration(minutes: 1));
 
-      // UI-Update: wir zeigen Spinner-Text "Dateiabfrage wird gesendet…"
-      if (!mounted) return;
-      setState(() {
-        // started wird NICHT hier gesetzt.
-        // started geht erst auf true, wenn wir BEGIN empfangen haben.
-      });
+      // Warten auf BEGIN → dann startet der Ring in _startNewFileSink()
     } catch (e) {
-      if (mounted) {
-        _showSnack(context, 'Dateiabfrage fehlgeschlagen: $e');
-      }
+      if (mounted) _showSnack(context, 'Dateiabfrage fehlgeschlagen: $e');
     } finally {
-      if (mounted) {
-        setState(() {
-          _requestInFlight = false;
-        });
-      }
+      if (mounted) setState(() => _requestInFlight = false);
     }
   }
 
-  // --- UI Rendering ---------------------------------------------------------
-
   void _onFinishedRing() {
-    // Wird vom Ring nach der Animation gerufen.
-    // Wir lassen done einfach stehen.
+    // Ring fertig animiert → nichts weiter nötig
   }
 
   @override
@@ -2350,7 +2200,6 @@ class _TransferViewState extends State<_TransferView> {
           key: const ValueKey('transfer'),
           padding: const EdgeInsets.fromLTRB(padH, padTop, padH, 140),
           children: [
-            // Zurück
             Align(
               alignment: Alignment.centerLeft,
               child: CupertinoButton(
@@ -2362,7 +2211,7 @@ class _TransferViewState extends State<_TransferView> {
                     vertical: 12,
                   ),
                   decoration: BoxDecoration(
-                    color: cs.surfaceVariant,
+                    color: cs.surfaceContainerHighest,
                     borderRadius: BorderRadius.circular(24),
                     border: Border.all(color: cs.outlineVariant),
                   ),
@@ -2408,7 +2257,6 @@ class _TransferViewState extends State<_TransferView> {
             Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                // Text
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
@@ -2423,7 +2271,7 @@ class _TransferViewState extends State<_TransferView> {
                       ),
                       const SizedBox(height: 6),
                       Text(
-                        'Supporting line text lorem ipsum dolor sit amet, consectetur.',
+                        'Unterstützungstext …',
                         style: TextStyle(color: cs.onSurface.withOpacity(0.80)),
                       ),
                     ],
@@ -2442,7 +2290,6 @@ class _TransferViewState extends State<_TransferView> {
 
             const SizedBox(height: 14),
 
-            // Start-Button
             Row(
               children: [
                 const Spacer(),
@@ -2455,7 +2302,7 @@ class _TransferViewState extends State<_TransferView> {
                       vertical: 12,
                     ),
                     decoration: BoxDecoration(
-                      color: cs.surfaceVariant,
+                      color: cs.surfaceContainerHighest,
                       borderRadius: BorderRadius.circular(26),
                       border: Border.all(color: cs.outlineVariant),
                     ),
@@ -2501,8 +2348,7 @@ class _TransferViewState extends State<_TransferView> {
 
             if (_transferActive)
               Text(
-                'Empfange Daten... '
-                '$_receivedFileBytes / $_expectedFileBytes Bytes',
+                'Empfange Daten... $_receivedFileBytes / $_expectedFileBytes Bytes',
                 style: TextStyle(color: cs.onSurface.withOpacity(0.8)),
               ),
 
@@ -2805,7 +2651,7 @@ class _LargeTitleHeader extends SliverPersistentHeaderDelegate {
   ) {
     final top = MediaQuery.of(context).padding.top;
     return Container(
-      color: Theme.of(context).colorScheme.background,
+      color: Theme.of(context).colorScheme.surface,
       padding: EdgeInsets.fromLTRB(
         context.r.gutter,
         top + 8,
@@ -2846,7 +2692,7 @@ class _WeekdaysBar extends SliverPersistentHeaderDelegate {
       child: BackdropFilter(
         filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
         child: Container(
-          color: cs.background.withOpacity(0.82),
+          color: cs.surface.withOpacity(0.82),
           child: Column(
             children: [
               Padding(
@@ -3318,7 +3164,6 @@ class _GlassSurface extends StatelessWidget {
 /// Gruppiert Navigations-Icons, Label und optionalen Search-Pill.
 class _GlassGroup extends StatelessWidget {
   const _GlassGroup({
-    super.key,
     required this.children,
     this.radius = 28,
     this.hpad = 10,
@@ -3366,7 +3211,6 @@ class _NavIcon extends StatelessWidget {
     final Color fg = selected ? cs.secondary : cs.onSurface.withOpacity(0.97);
     return CupertinoButton(
       padding: EdgeInsets.zero,
-      minSize: 0,
       pressedOpacity: 0.6,
       onPressed: onTap,
       child: SizedBox(
@@ -3375,6 +3219,7 @@ class _NavIcon extends StatelessWidget {
           child: Icon(icon, color: fg, size: iconSize),
         ),
       ),
+      minimumSize: Size(0, 0),
     );
   }
 }
@@ -3385,7 +3230,7 @@ class _NavIcon extends StatelessWidget {
 
 /// Überschrift für Transfer-Schritte mit kleinerem Untertitel.
 class _StepTitle extends StatelessWidget {
-  const _StepTitle(this.text, {super.key});
+  const _StepTitle(this.text);
   final String text;
 
   @override
@@ -3404,7 +3249,7 @@ class _StepTitle extends StatelessWidget {
 
 /// Dialog, der Benutzername/Passwort abfragt und im Storage persistiert.
 class _LoginDialog extends StatefulWidget {
-  const _LoginDialog({super.key});
+  const _LoginDialog();
 
   @override
   State<_LoginDialog> createState() => _LoginDialogState();
@@ -3746,7 +3591,7 @@ class SettingsPage extends StatelessWidget {
                           horizontal: 16,
                           vertical: 10,
                         ),
-                        color: cs.surfaceVariant,
+                        color: cs.surfaceContainerHighest,
                         borderRadius: BorderRadius.circular(
                           context.r.pillRadius(true),
                         ),
@@ -3913,7 +3758,7 @@ class SettingsPage extends StatelessWidget {
                           horizontal: 16,
                           vertical: 10,
                         ),
-                        color: cs.surfaceVariant,
+                        color: cs.surfaceContainerHighest,
                         borderRadius: BorderRadius.circular(
                           context.r.pillRadius(true),
                         ),
@@ -3992,7 +3837,7 @@ class _ColorChip extends StatelessWidget {
 
 /// Überschrift-Widget mit optionaler Action-Schaltfläche.
 class _SectionHeader extends StatelessWidget {
-  const _SectionHeader(this.text, {super.key});
+  const _SectionHeader(this.text);
   final String text;
 
   @override
@@ -4036,7 +3881,7 @@ class PillLink extends StatelessWidget {
       child: Container(
         padding: EdgeInsets.symmetric(horizontal: basePadH, vertical: basePadV),
         decoration: BoxDecoration(
-          color: cs.surfaceVariant,
+          color: cs.surfaceContainerHighest,
           borderRadius: BorderRadius.circular(radius),
           border: Border.all(color: cs.outlineVariant.withOpacity(0.5)),
         ),
@@ -4214,7 +4059,6 @@ class FirstRunScreen extends StatelessWidget {
   Widget _skipButton({required String label, required VoidCallback onTap}) {
     return CupertinoButton(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-      minSize: 0,
       onPressed: onTap,
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
@@ -4232,6 +4076,7 @@ class FirstRunScreen extends StatelessWidget {
           ),
         ),
       ),
+      minimumSize: Size(0, 0),
     );
   }
 }
@@ -4352,7 +4197,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
     const btnRadius = 28.0;
 
     return Scaffold(
-      backgroundColor: cs.background,
+      backgroundColor: cs.surface,
       body: Stack(
         fit: StackFit.expand,
         children: [
@@ -4378,7 +4223,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
                       vertical: 8,
                     ),
                     decoration: BoxDecoration(
-                      color: cs.surfaceVariant,
+                      color: cs.surfaceContainerHighest,
                       borderRadius: BorderRadius.circular(22),
                       border: Border.all(color: cs.outlineVariant),
                     ),
@@ -4524,7 +4369,7 @@ class _OnbButton extends StatelessWidget {
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
     // Light: hellgrau + dunkler Text, Dark: dunkel + weißer Text
-    final bg = cs.surfaceVariant;
+    final bg = cs.surfaceContainerHighest;
     final fg = cs.onSurface;
 
     return Center(
