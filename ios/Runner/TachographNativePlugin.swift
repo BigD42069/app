@@ -306,7 +306,7 @@ private final class GomobileBinding {
   }
 
   private static func invoke(selector: Selector, on object: NSObject, with value: Any?) {
-    guard let method = class_getInstanceMethod(type(of: object), selector) else {
+    guard let methodSignature = type(of: object).instanceMethodSignature(for: selector) else {
       object.perform(selector, with: value)
       return
     }
@@ -390,13 +390,8 @@ private final class GomobileBinding {
     for name in selectors {
       let selector = NSSelectorFromString(name)
       if object.responds(to: selector) {
-        if let method = class_getInstanceMethod(type(of: object), selector) {
-          guard let returnCString = method_copyReturnType(method) else {
-            continue
-          }
-          defer { free(returnCString) }
-
-          let returnType = String(cString: returnCString)
+        if let signature = type(of: object).instanceMethodSignature(for: selector) {
+          let returnType = String(cString: signature.methodReturnType)
           if returnType == "B" || returnType == "c" {
             typealias BoolFunction = @convention(c) (AnyObject, Selector) -> Bool
             let methodPointer = object.method(for: selector)
