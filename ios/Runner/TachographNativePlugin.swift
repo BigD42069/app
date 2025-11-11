@@ -40,16 +40,18 @@ public class TachographNativePlugin: NSObject, FlutterPlugin {
       return
     }
 
-    let verify = args["verify"] as? Bool ?? false
-    let pksPath = args["pksPath"] as? String ?? ""
+    let pks1Dir = args["pks1Dir"] as? String ?? ""
+    let pks2Dir = args["pks2Dir"] as? String ?? ""
+    let strictMode = args["strictMode"] as? Bool ?? false
     let timeout = args["timeoutMs"] as? NSNumber
 
     do {
       let parser = try ensureParser()
       let options = MobileParseOptions()
       options.source = source
-      options.verify = verify
-      options.pksPath = pksPath
+      options.pks1Dir = pks1Dir
+      options.pks2Dir = pks2Dir
+      options.strictMode = strictMode
       if let timeout = timeout {
         options.timeoutMs = timeout.int64Value
       }
@@ -58,6 +60,7 @@ public class TachographNativePlugin: NSObject, FlutterPlugin {
       let response: [String: Any?] = [
         "status": parseResult.status,
         "json": parseResult.json.isEmpty ? nil : parseResult.json,
+        "verified": parseResult.verified,
         "verificationLog": parseResult.verificationLog.isEmpty ? nil : parseResult.verificationLog,
         "errorDetails": parseResult.errorDetails.isEmpty ? nil : parseResult.errorDetails,
       ]

@@ -49,8 +49,9 @@ class TachographNativePlugin : FlutterPlugin, MethodCallHandler {
 
         val payload = args["payload"] as? ByteArray
         val source = args["source"] as? String
-        val verify = args["verify"] as? Boolean ?: false
-        val pksPath = args["pksPath"] as? String ?: ""
+        val pks1Dir = args["pks1Dir"] as? String ?: ""
+        val pks2Dir = args["pks2Dir"] as? String ?: ""
+        val strictMode = args["strictMode"] as? Boolean ?: false
         val timeout = (args["timeoutMs"] as? Number)?.toLong() ?: 0L
 
         if (payload == null || source == null) {
@@ -67,14 +68,16 @@ class TachographNativePlugin : FlutterPlugin, MethodCallHandler {
         try {
             val options = ParseOptions().apply {
                 setSource(source)
-                setVerify(verify)
-                setPKSPath(pksPath)
+                setPKS1Dir(pks1Dir)
+                setPKS2Dir(pks2Dir)
+                setStrictMode(strictMode)
                 setTimeoutMs(timeout)
             }
             val parseResult = parser.parseDdd(payload, options)
             val response = hashMapOf<String, Any?>(
                 "status" to parseResult.status(),
                 "json" to parseResult.json().orEmpty().ifEmpty { null },
+                "verified" to parseResult.verified(),
                 "verificationLog" to parseResult.verificationLog().orEmpty().ifEmpty { null },
                 "errorDetails" to parseResult.errorDetails().orEmpty().ifEmpty { null },
             )
@@ -95,6 +98,8 @@ class TachographNativePlugin : FlutterPlugin, MethodCallHandler {
 private fun mobile.ParseResult.status(): String = getStatus()
 
 private fun mobile.ParseResult.json(): String? = getJson()
+
+private fun mobile.ParseResult.verified(): Boolean = getVerified()
 
 private fun mobile.ParseResult.verificationLog(): String? = getVerificationLog()
 

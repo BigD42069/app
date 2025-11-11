@@ -2,230 +2,155 @@ package mobile
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
-	"path/filepath"
+	"strings"
 	"sync"
-	"time"
+
+	tachomobile "github.com/traconiq/tachoparser/pkg/mobile"
 )
 
 const (
-	statusOk        = "ok"
-	statusError     = "error"
-	statusCancelled = "cancelled"
+	statusOk = "ok"
 )
 
-// Parser kapselt die Analyse einer DDD-Datei und verwaltet einen optionalen
-// Cancel-/Timeout-Kontext, damit gomobile-Bindings Cancel-Requests sauber
-// durchreichen können.
-type Parser struct {
-	mu     sync.Mutex
-	cancel context.CancelFunc
+// Options konfigurieren das Verhalten des nativen Parsers. Sie werden vor
+// jedem Parse-Aufruf in ein Tachograph-Service übersetzt.
+type Options struct {
+	PKS1Dir    string
+	PKS2Dir    string
+	StrictMode bool
 }
 
-// NewParser erzeugt eine neue Parser-Instanz.
+type parserConfig struct {
+	pks1       string
+	pks2       string
+	strictMode bool
+}
+
+// Parser kapselt den Zugriff auf die Tachograph-Mobile-Bibliothek. Die
+// Instanz hält das aktuell initialisierte Service und sorgt dafür, dass
+// Zertifikatsoptionen nur bei Bedarf neu geladen werden.
+type Parser struct {
+	mu      sync.Mutex
+	service *tachomobile.Parser
+	cfg     parserConfig
+}
+
+// NewParser erzeugt eine Parser-Instanz mit Standardeinstellungen. Die
+// eigentliche native Bibliothek wird lazily geladen, sobald `ParseDdd`
+// aufgerufen wird.
 func NewParser() *Parser {
 	return &Parser{}
 }
 
-// ParseResult beschreibt die Ergebnisse des nativen Parse-Laufs.
+// ParseOptions beschreibt zusätzliche Parameter, die beim Parsen gesetzt
+// werden können.
+type ParseOptions struct {
+	Source     string
+	TimeoutMs  int
+	PKS1Dir    string
+	PKS2Dir    string
+	StrictMode bool
+}
+
+// ParseResult enthält die Ergebnisse eines Parse-Laufs.
 type ParseResult struct {
 	Status          string
 	Json            string
+	Verified        bool
 	VerificationLog string
 	ErrorDetails    string
 }
 
-// ParseOptions enthält optionale Parameter für die Analyse.
-type ParseOptions struct {
-	Source    string
-	Verify    bool
-	PKSPath   string
-	TimeoutMs int
-}
-
-// ParseDdd führt eine einfache Analyse der DDD-Datei durch. Die Implementierung
-// ersetzt keinen vollständigen Tachographen-Decoder, stellt aber eine stabile
-// API für die Flutter-Bridge bereit.
+// ParseDdd führt den Tachograph-Parser gegen die übergebenen Rohdaten aus.
 func (p *Parser) ParseDdd(payload []byte, opts *ParseOptions) (*ParseResult, error) {
 	if len(payload) == 0 {
 		return nil, &NativeError{Code: ErrInvalidArguments, Message: "payload must not be empty"}
 	}
-
 	if opts == nil {
-		return nil, &NativeError{Code: ErrInvalidArguments, Message: "options must be provided"}
+		return nil, &NativeError{Code: ErrInvalidArguments, Message: "options must not be nil"}
 	}
 
-	if opts.Source != "vu" && opts.Source != "card" {
-		return nil, &NativeError{Code: ErrInvalidArguments, Message: "source must be either 'vu' or 'card'"}
+	mode := strings.ToLower(strings.TrimSpace(opts.Source))
+	if mode != "card" && mode != "vu" {
+		return nil, &NativeError{Code: ErrInvalidArguments, Message: "source must be 'card' or 'vu'"}
 	}
 
-	if opts.Verify && opts.PKSPath == "" {
-		return nil, &NativeError{Code: ErrInvalidArguments, Message: "pksPath is required when verify is true"}
-	}
-
-	ctx, cancel := context.WithCancel(context.Background())
-	if opts.TimeoutMs > 0 {
-		ctx, cancel = context.WithTimeout(ctx, time.Duration(opts.TimeoutMs)*time.Millisecond)
-	}
-
-	p.mu.Lock()
-	if p.cancel != nil {
-		p.cancel()
-	}
-	p.cancel = cancel
-	p.mu.Unlock()
-
-	defer func() {
-		cancel()
-		p.mu.Lock()
-		p.cancel = nil
-		p.mu.Unlock()
-	}()
-
-	if err := ctx.Err(); err != nil {
-		return nil, translateContextError(err)
-	}
-
-	const chunkSize = 1 << 14 // 16KiB
-	for offset := 0; offset < len(payload); offset += chunkSize {
-		select {
-		case <-ctx.Done():
-			if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-				return nil, &NativeError{Code: ErrTimeout, Message: "parse operation timed out"}
-			}
-			return &ParseResult{Status: statusCancelled}, nil
-		default:
-		}
-
-		// Simuliere Rechenaufwand, damit Timeouts & Cancels in Tests greifbar
-		// werden. In einer realen Implementierung würde hier das tatsächliche
-		// Decoding der DDD-Daten erfolgen.
-		time.Sleep(2 * time.Millisecond)
-	}
-
-	if err := ctx.Err(); err != nil {
-		if errors.Is(err, context.DeadlineExceeded) {
-			return nil, &NativeError{Code: ErrTimeout, Message: "parse operation timed out"}
-		}
-		if errors.Is(err, context.Canceled) {
-			return &ParseResult{Status: statusCancelled}, nil
-		}
-		return nil, &NativeError{Code: ErrParser, Message: err.Error()}
-	}
-
-	result := map[string]any{
-		"bytes":       len(payload),
-		"source":      opts.Source,
-		"sha256":      sha256Digest(payload),
-		"generatedAt": time.Now().UTC().Format(time.RFC3339Nano),
-	}
-
-	if opts.Verify {
-		log, err := generateVerificationLog(ctx, opts.PKSPath)
-		if err != nil {
-			if errors.Is(err, context.Canceled) {
-				return &ParseResult{Status: statusCancelled}, nil
-			}
-			if errors.Is(err, os.ErrNotExist) {
-				return nil, &NativeError{Code: ErrInvalidArguments, Message: fmt.Sprintf("PKS path %q does not exist", opts.PKSPath)}
-			}
-			return &ParseResult{
-				Status:       statusError,
-				ErrorDetails: fmt.Sprintf("verification failed: %v", err),
-			}, nil
-		}
-		result["verified"] = true
-		result["pksPath"] = opts.PKSPath
-		result["verification"] = log
-		return marshalResult(statusOk, result, log)
-	}
-
-	return marshalResult(statusOk, result, "")
-}
-
-// CancelActiveParse stoppt laufende Parse-Operationen.
-func (p *Parser) CancelActiveParse() {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	if p.cancel != nil {
-		p.cancel()
-		p.cancel = nil
-	}
-}
-
-func marshalResult(status string, payload map[string]any, log string) (*ParseResult, error) {
-	data, err := json.Marshal(payload)
+	service, err := p.ensureService(opts)
 	if err != nil {
-		return nil, &NativeError{Code: ErrParser, Message: fmt.Sprintf("failed to serialise result: %v", err)}
+		return nil, err
 	}
+
+	timeout := opts.TimeoutMs
+	result, err := service.ParseWithTimeout(payload, mode, timeout)
+	if err != nil {
+		return nil, translateParseError(err)
+	}
+
+	if result == nil {
+		return nil, &NativeError{Code: ErrParser, Message: "native parser returned no result"}
+	}
+
 	return &ParseResult{
-		Status:          status,
-		Json:            string(data),
-		VerificationLog: log,
+		Status:   statusOk,
+		Json:     result.PayloadJSON,
+		Verified: result.Verified,
 	}, nil
 }
 
-func sha256Digest(payload []byte) string {
-	sum := sha256.Sum256(payload)
-	return hex.EncodeToString(sum[:])
+// CancelActiveParse bricht laufende Parser-Jobs ab.
+func (p *Parser) CancelActiveParse() {
+	p.mu.Lock()
+	service := p.service
+	p.mu.Unlock()
+
+	if service != nil {
+		service.CancelActiveParse()
+	}
 }
 
-func generateVerificationLog(ctx context.Context, dir string) (string, error) {
-	info, err := os.Stat(dir)
-	if err != nil {
-		return "", err
-	}
-	if !info.IsDir() {
-		return "", fmt.Errorf("%s is not a directory", dir)
+func (p *Parser) ensureService(opts *ParseOptions) (*tachomobile.Parser, error) {
+	desired := parserConfig{
+		pks1:       opts.PKS1Dir,
+		pks2:       opts.PKS2Dir,
+		strictMode: opts.StrictMode,
 	}
 
-	type entry struct {
-		Path string `json:"path"`
-		Size int64  `json:"size"`
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	if p.service != nil && p.cfg == desired {
+		return p.service, nil
 	}
 
-	entries := []entry{}
-	walkErr := filepath.WalkDir(dir, func(path string, d os.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		default:
-		}
-		if d.IsDir() {
-			return nil
-		}
-		stat, err := d.Info()
-		if err != nil {
-			return err
-		}
-		entries = append(entries, entry{Path: path, Size: stat.Size()})
-		return nil
+	if p.service != nil {
+		p.service.CancelActiveParse()
+	}
+
+	service, err := tachomobile.NewParser(tachomobile.Options{
+		PKS1Dir:    desired.pks1,
+		PKS2Dir:    desired.pks2,
+		StrictMode: desired.strictMode,
 	})
-	if walkErr != nil {
-		return "", walkErr
+	if err != nil {
+		return nil, &NativeError{Code: ErrParser, Message: fmt.Sprintf("failed to initialise native parser: %v", err)}
 	}
 
-	data, err := json.Marshal(entries)
-	if err != nil {
-		return "", err
-	}
-	return string(data), nil
+	p.service = service
+	p.cfg = desired
+	return service, nil
 }
 
-func translateContextError(err error) error {
+func translateParseError(err error) error {
+	if err == nil {
+		return nil
+	}
 	if errors.Is(err, context.DeadlineExceeded) {
-		return &NativeError{Code: ErrTimeout, Message: "operation timed out"}
+		return &NativeError{Code: ErrTimeout, Message: "parse operation timed out"}
 	}
 	if errors.Is(err, context.Canceled) {
-		return &NativeError{Code: ErrCancelled, Message: "operation cancelled"}
+		return &NativeError{Code: ErrCancelled, Message: "parse operation cancelled"}
 	}
 	return &NativeError{Code: ErrParser, Message: err.Error()}
 }
