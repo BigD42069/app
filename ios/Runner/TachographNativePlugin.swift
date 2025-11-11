@@ -1,5 +1,6 @@
 import Flutter
 import Foundation
+import ObjectiveC.runtime
 
 private let channelName = "tachograph_native"
 
@@ -310,13 +311,19 @@ private final class GomobileBinding {
       return
     }
 
-    let argumentCount = methodSignature.numberOfArguments
+    let argumentCount = method_getNumberOfArguments(method)
     guard argumentCount >= 3 else {
       object.perform(selector, with: value)
       return
     }
 
-    let argumentType = String(cString: methodSignature.getArgumentType(at: 2))
+    guard let argumentCString = method_copyArgumentType(method, 2) else {
+      object.perform(selector, with: value)
+      return
+    }
+    defer { free(argumentCString) }
+
+    let argumentType = String(cString: argumentCString)
 
     switch argumentType {
     case "B", "c":
@@ -387,8 +394,8 @@ private final class GomobileBinding {
           let returnType = String(cString: signature.methodReturnType)
           if returnType == "B" || returnType == "c" {
             typealias BoolFunction = @convention(c) (AnyObject, Selector) -> Bool
-            let method = object.method(for: selector)
-            let function = unsafeBitCast(method, to: BoolFunction.self)
+            let methodPointer = object.method(for: selector)
+            let function = unsafeBitCast(methodPointer, to: BoolFunction.self)
             return function(object, selector)
           }
           if returnType == "@" {
