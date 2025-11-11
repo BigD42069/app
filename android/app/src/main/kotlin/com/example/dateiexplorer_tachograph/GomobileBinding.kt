@@ -21,11 +21,13 @@ internal class GomobileBinding private constructor(
     private val closeMethod: Method?,
     private val parseOptionsCtor: Constructor<*>,
     private val setSourceMethod: Method?,
-    private val setVerifyMethod: Method?,
-    private val setPksPathMethod: Method?,
+    private val setPks1DirMethod: Method?,
+    private val setPks2DirMethod: Method?,
+    private val setStrictModeMethod: Method?,
     private val setTimeoutMethod: Method?,
     private val parseResultStatus: Method?,
     private val parseResultJson: Method?,
+    private val parseResultVerified: Method?,
     private val parseResultVerificationLog: Method?,
     private val parseResultErrorDetails: Method?,
     private val nativeErrorClass: Class<*>?,
@@ -42,8 +44,9 @@ internal class GomobileBinding private constructor(
     fun parse(
         payload: ByteArray,
         source: String,
-        verify: Boolean,
-        pksPath: String,
+        pks1Dir: String,
+        pks2Dir: String,
+        strictMode: Boolean,
         timeoutMs: Long,
     ): ParseOutcome {
         val options = try {
@@ -58,14 +61,19 @@ internal class GomobileBinding private constructor(
             Log.w(LOG_TAG, "Failed to set source on ParseOptions", error)
         }
         try {
-            setVerifyMethod?.invoke(options, verify)
+            setPks1DirMethod?.invoke(options, pks1Dir)
         } catch (error: Throwable) {
-            Log.w(LOG_TAG, "Failed to set verify on ParseOptions", error)
+            Log.w(LOG_TAG, "Failed to set pks1Dir on ParseOptions", error)
         }
         try {
-            setPksPathMethod?.invoke(options, pksPath)
+            setPks2DirMethod?.invoke(options, pks2Dir)
         } catch (error: Throwable) {
-            Log.w(LOG_TAG, "Failed to set pksPath on ParseOptions", error)
+            Log.w(LOG_TAG, "Failed to set pks2Dir on ParseOptions", error)
+        }
+        try {
+            setStrictModeMethod?.invoke(options, strictMode)
+        } catch (error: Throwable) {
+            Log.w(LOG_TAG, "Failed to set strictMode on ParseOptions", error)
         }
         if (timeoutMs > 0) {
             try {
@@ -91,12 +99,14 @@ internal class GomobileBinding private constructor(
 
         val status = parseResultStatus?.invoke(result) as? String ?: "unknown"
         val json = (parseResultJson?.invoke(result) as? String).orEmpty()
+        val verified = parseResultVerified?.invoke(result) as? Boolean ?: false
         val verificationLog = (parseResultVerificationLog?.invoke(result) as? String).orEmpty()
         val errorDetails = (parseResultErrorDetails?.invoke(result) as? String).orEmpty()
 
         val payloadMap = mapOf(
             "status" to status,
             "json" to json.ifEmpty { null },
+            "verified" to verified,
             "verificationLog" to verificationLog.ifEmpty { null },
             "errorDetails" to errorDetails.ifEmpty { null },
         )
@@ -165,12 +175,14 @@ internal class GomobileBinding private constructor(
 
             val parseOptionsCtor = parseOptionsClass.getDeclaredConstructor()
             val setSourceMethod = parseOptionsClass.findMethod("setSource", String::class.java)
-            val setVerifyMethod = parseOptionsClass.findMethod("setVerify", java.lang.Boolean.TYPE, java.lang.Boolean::class.java)
-            val setPksPathMethod = parseOptionsClass.findMethod("setPKSPath", String::class.java)
+            val setPks1DirMethod = parseOptionsClass.findMethod("setPKS1Dir", String::class.java)
+            val setPks2DirMethod = parseOptionsClass.findMethod("setPKS2Dir", String::class.java)
+            val setStrictModeMethod = parseOptionsClass.findMethod("setStrictMode", java.lang.Boolean.TYPE, java.lang.Boolean::class.java)
             val setTimeoutMethod = parseOptionsClass.findMethod("setTimeoutMs", java.lang.Long.TYPE, java.lang.Long::class.java)
 
             val parseResultStatus = parseResultClass.findMethod("getStatus")
             val parseResultJson = parseResultClass.findMethod("getJson")
+            val parseResultVerified = parseResultClass.findMethod("getVerified")
             val parseResultVerificationLog = parseResultClass.findMethod("getVerificationLog")
             val parseResultErrorDetails = parseResultClass.findMethod("getErrorDetails")
 
@@ -184,11 +196,13 @@ internal class GomobileBinding private constructor(
                 closeMethod = closeMethod,
                 parseOptionsCtor = parseOptionsCtor,
                 setSourceMethod = setSourceMethod,
-                setVerifyMethod = setVerifyMethod,
-                setPksPathMethod = setPksPathMethod,
+                setPks1DirMethod = setPks1DirMethod,
+                setPks2DirMethod = setPks2DirMethod,
+                setStrictModeMethod = setStrictModeMethod,
                 setTimeoutMethod = setTimeoutMethod,
                 parseResultStatus = parseResultStatus,
                 parseResultJson = parseResultJson,
+                parseResultVerified = parseResultVerified,
                 parseResultVerificationLog = parseResultVerificationLog,
                 parseResultErrorDetails = parseResultErrorDetails,
                 nativeErrorClass = nativeErrorClass,

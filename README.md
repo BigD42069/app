@@ -18,8 +18,8 @@ gefunden und eingebunden werden:
 
 | Plattform | Erwarteter Pfad | Hinweise |
 |-----------|-----------------|----------|
-| Android   | `android/app/libs/android.lib.aar` | Die `android/app/build.gradle.kts` lädt das AAR direkt aus diesem Verzeichnis via `implementation(files("libs/androidlib.aar"))`. Du musst die Datei genau so benennen und lokal einspielen. |
-| iOS       | `ios/Frameworks/ios.xcframework` | Das Xcode-Projekt referenziert das Framework relativ zum `Frameworks/`-Ordner (`path = ../Frameworks/ios.xcframework`). Kopiere den kompletten `ios.xcframework`-Ordner dort hinein, bevor du Xcode startest. |
+| Android   | `android/app/libs/android.lib.aar` | Die `android/app/build.gradle.kts` lädt das AAR direkt aus diesem Verzeichnis via `implementation(files("libs/android.lib.aar"))`. Du musst die Datei genau so benennen und lokal einspielen. |
+| iOS       | `ios/ios.xcframework` | Das Xcode-Projekt referenziert das Framework über `path = ios.xcframework` relativ zum iOS-Verzeichnis. Lege den kompletten `ios.xcframework`-Ordner – inklusive der Unterordner `ios-arm64` und `ios-arm64_x86_64-simulator` samt `Mobile.framework` und Header-Dateien – direkt im Ordner `ios/` ab, bevor du Xcode startest. |
 
 Die beiden Ordner sind per `.gitignore` von Commits ausgeschlossen, damit keine großen Binärdateien im Repository landen. Lege die Artefakte deshalb nur lokal ab oder verwende ein separates Artefakt-Repository.
 

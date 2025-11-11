@@ -4,6 +4,23 @@ Dieser Leitfaden definiert den MethodChannel-Kontrakt zwischen Flutter und den
 `gomobile`-Artefakten. Er beschreibt Parameter, Rückgabewerte sowie das
 Threading- und Abbruchverhalten.
 
+## Plattform-spezifische Implementierung
+
+- **Android (`android/app/src/...`)** bindet die Datei
+  `android/app/libs/android.lib.aar`. Der Kotlin-Plugin-Code
+  (`TachographNativePlugin.kt`) instanziiert `mobile.Parser` aus diesem AAR und
+  setzt den `go.Seq`-Kontext, bevor `parseDdd` aufgerufen wird.
+- **iOS (`ios/Runner/...`)** verlinkt `ios/ios.xcframework`. Die
+  Swift-Implementierung importiert das Framework via `canImport(Mobile)` und
+  ruft `MobileParser.parseDdd` mit identischen Optionen auf. Xcode wählt anhand
+  der im XCFramework enthaltenen Slices (`ios-arm64/Mobile.framework` für
+  Geräte, `ios-arm64_x86_64-simulator/Mobile.framework` für Simulatoren) den
+  passenden Build aus; beide enthalten die benötigten Header (`Mobile.h`,
+  `Mobile.objc.h`).
+
+Beide Plattformen liefern somit den gleichen Kanal-Contract, greifen aber auf
+ihre jeweilige native Bibliothek zurück.
+
 ## Channel & Methoden
 
 - **Channel-Name:** `tachograph_native`
@@ -15,8 +32,9 @@ Threading- und Abbruchverhalten.
 | ---------------- | -------------- | ------------ |
 | `payload`        | `Uint8List`    | DDD-Datei als Bytestrom |
 | `source`         | `String`       | "vu" (Fahrzeuggerät) oder "card" |
-| `verify`         | `bool`         | Signaturprüfung aktivieren |
-| `pksPath`        | `String`       | Absoluter Pfad zum PKS-Verzeichnis |
+| `pks1Dir`        | `String`       | Optional: Absoluter Pfad zu den Zertifikaten der ersten Generation |
+| `pks2Dir`        | `String`       | Optional: Absoluter Pfad zu den Zertifikaten der zweiten Generation |
+| `strictMode`     | `bool`         | Aktiviert striktes Zertifikats-Handling (Default: `false`) |
 | `timeoutMs`      | `int?`         | Optionales Timeout (Millisekunden); die Dart-Seite sendet standardmäßig 30.000 |
 
 ### Rückgabe
@@ -27,6 +45,7 @@ Die native Seite liefert eine Map mit folgenden Schlüsseln:
 | -------------------- | ---------- | ------------ |
 | `status`             | `String`   | `ok`, `error` oder `cancelled` |
 | `json`               | `String?`  | Serialisierte Payload bei Erfolg |
+| `verified`           | `bool`     | Ergebnis der Signaturprüfung |
 | `verificationLog`    | `String?`  | Detaillog der Prüfschritte |
 | `errorDetails`       | `String?`  | Fehlermeldung bei `error` |
 

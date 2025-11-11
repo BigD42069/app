@@ -57,7 +57,9 @@ build/gomobile/1.2.0/checksums.txt
 Für den Flutter-Client werden die Dateien anschließend an folgende Stellen kopiert:
 
 - `android/app/libs/android.lib.aar`
-- `ios/Frameworks/ios.xcframework`
+- `ios/ios.xcframework` (enthält die Slices `ios-arm64/Mobile.framework`
+  für physische Geräte sowie `ios-arm64_x86_64-simulator/Mobile.framework` für
+  Simulatoren samt Header-Dateien `Mobile.h` und `Mobile.objc.h`)
 
 ### Manuelle Ausführung
 
