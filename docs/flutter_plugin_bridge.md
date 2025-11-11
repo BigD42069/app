@@ -12,11 +12,7 @@ Threading- und Abbruchverhalten.
   setzt den `go.Seq`-Kontext, bevor `parseDdd` aufgerufen wird.
 - **iOS (`ios/Runner/...`)** verlinkt `ios/Frameworks/ios.xcframework`. Die
   Swift-Implementierung importiert das Framework via `canImport(Mobile)` und
-  ruft `MobileParser.parseDdd` mit identischen Optionen auf. Xcode wählt anhand
-  der im XCFramework enthaltenen Slices (`ios-arm64/Mobile.framework` für
-  Geräte, `ios-arm64_x86_64-simulator/Mobile.framework` für Simulatoren) den
-  passenden Build aus; beide enthalten die benötigten Header (`Mobile.h`,
-  `Mobile.objc.h`).
+  ruft `MobileParser.parseDdd` mit identischen Optionen auf.
 
 Beide Plattformen liefern somit den gleichen Kanal-Contract, greifen aber auf
 ihre jeweilige native Bibliothek zurück.
