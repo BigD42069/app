@@ -45,7 +45,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:timezone/data/latest.dart' as tz;
 import 'package:timezone/timezone.dart' as tz;
 
-import 'ddd_parser.dart';
+import 'parser_test_page.dart';
 
 /* =============================================================================
    Anwendungseinstieg & Bootstrap
@@ -1039,71 +1039,22 @@ class EmptyPage extends StatelessWidget {
 ==============================================================================*/
 
 /// Stellt vergangene Übertragungen als scrollbare Liste dar.
-class ListPage extends StatefulWidget {
+class ListPage extends StatelessWidget {
   const ListPage({super.key});
 
   @override
-  State<ListPage> createState() => _ListPageState();
-}
-
-class _ListPageState extends State<ListPage> {
-  late final VoidCallback _inboxListener;
-
-  @override
-  void initState() {
-    super.initState();
-
-    // Sobald eine neue DDD gespeichert wurde → Liste neu laden
-    _inboxListener = () {
-      setState(() {});
-    };
-    dddInboxVersion.addListener(_inboxListener);
-  }
-
-  @override
-  void dispose() {
-    dddInboxVersion.removeListener(_inboxListener);
-    super.dispose();
-  }
-
-  Future<void> _refresh() async {
-    setState(() {});
-  }
-
-  Widget _buildMessageList(
-    BuildContext context, {
-    required IconData icon,
-    required String title,
-    required String subtitle,
-  }) {
+  Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
-    return ListView(
-      physics: const AlwaysScrollableScrollPhysics(),
-      padding: EdgeInsets.fromLTRB(
-        context.r.gutter,
-        120,
-        context.r.gutter,
-        context.r.bottomBarH + context.r.gutter,
+    return Center(
+      child: Text(
+        'Keine Übertragungen verfügbar',
+        style: TextStyle(
+          fontSize: 18,
+          fontWeight: FontWeight.w600,
+          color: cs.onSurface,
+        ),
+        textAlign: TextAlign.center,
       ),
-      children: [
-        Icon(icon, size: 56, color: cs.onSurface.withOpacity(0.7)),
-        const SizedBox(height: 16),
-        Text(
-          title,
-          textAlign: TextAlign.center,
-          style: TextStyle(
-            fontSize: 18,
-            fontWeight: FontWeight.w600,
-            color: cs.onSurface,
-          ),
-        ),
-        const SizedBox(height: 8),
-        Text(
-          subtitle,
-          textAlign: TextAlign.center,
-          style: TextStyle(color: cs.onSurface.withOpacity(0.75)),
-        ),
-      ],
     );
   }
 }
@@ -3484,6 +3435,11 @@ class SettingsPage extends StatelessWidget {
           label: 'Bedienungsanleitung',
           onTap: () => _notImplemented(context, 'Bedienungsanleitung'),
         ),
+        const SizedBox(height: 14),
+        PillLink(
+          label: 'Parsertest',
+          onTap: () => _openParserTest(context),
+        ),
 
         const SizedBox(height: 26),
         Divider(color: cs.outlineVariant, height: 1),
@@ -3630,6 +3586,12 @@ class SettingsPage extends StatelessWidget {
         content: Text('$where geöffnet (Stub)'),
         behavior: SnackBarBehavior.floating,
       ),
+    );
+  }
+
+  void _openParserTest(BuildContext context) {
+    Navigator.of(context).push(
+      MaterialPageRoute(builder: (_) => const ParserTestPage()),
     );
   }
 

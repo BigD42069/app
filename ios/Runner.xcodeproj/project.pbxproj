@@ -51,7 +51,7 @@
 		1498D2331E8E89220040F4C2 /* GeneratedPluginRegistrant.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = GeneratedPluginRegistrant.m; sourceTree = "<group>"; };
 		264501582BA3400B040ACA6D /* Pods-Runner.profile.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-Runner.profile.xcconfig"; path = "Target Support Files/Pods-Runner/Pods-Runner.profile.xcconfig"; sourceTree = "<group>"; };
 		2B0F2E8FEE1744337493469B /* Pods_Runner.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; includeInIndex = 0; path = Pods_Runner.framework; sourceTree = BUILT_PRODUCTS_DIR; };
-		5C5F31EB2C23B3E800D8AA01 /* ios.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; name = ios.xcframework; path = ../Frameworks/ios.xcframework; sourceTree = "<group>"; };
+            5C5F31EB2C23B3E800D8AA01 /* ios.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; name = ios.xcframework; path = ios/Frameworks/ios.xcframework; sourceTree = SOURCE_ROOT; };
 		331C807B294A618700263BE5 /* RunnerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RunnerTests.swift; sourceTree = "<group>"; };
 		331C8081294A63A400263BE5 /* RunnerTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = RunnerTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		3B3967151E833CAA004F5970 /* AppFrameworkInfo.plist */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text.plist.xml; name = AppFrameworkInfo.plist; path = Flutter/AppFrameworkInfo.plist; sourceTree = "<group>"; };
@@ -502,10 +502,20 @@
 				DEVELOPMENT_TEAM = BLDQHTYPD9;
 				ENABLE_BITCODE = NO;
 				INFOPLIST_FILE = Runner/Info.plist;
-				LD_RUNPATH_SEARCH_PATHS = (
-					"$(inherited)",
-					"@executable_path/Frameworks",
-				);
+                               HEADER_SEARCH_PATHS = (
+                                       "$(inherited)",
+                                       "$(PROJECT_DIR)/Frameworks/ios.xcframework/ios-arm64/Mobile.framework/Headers",
+                                       "$(PROJECT_DIR)/Frameworks/ios.xcframework/ios-arm64_x86_64-simulator/Mobile.framework/Headers",
+                               );
+                               LD_RUNPATH_SEARCH_PATHS = (
+                                       "$(inherited)",
+                                       "@executable_path/Frameworks",
+                               );
+                               FRAMEWORK_SEARCH_PATHS = (
+                                       "$(inherited)",
+                                       "$(PROJECT_DIR)/Frameworks/ios.xcframework/ios-arm64",
+                                       "$(PROJECT_DIR)/Frameworks/ios.xcframework/ios-arm64_x86_64-simulator",
+                               );
 				PRODUCT_BUNDLE_IDENTIFIER = com.example.dateiexplorerTachograph;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_OBJC_BRIDGING_HEADER = "Runner/Runner-Bridging-Header.h";
@@ -685,10 +695,20 @@
 				DEVELOPMENT_TEAM = BLDQHTYPD9;
 				ENABLE_BITCODE = NO;
 				INFOPLIST_FILE = Runner/Info.plist;
-				LD_RUNPATH_SEARCH_PATHS = (
-					"$(inherited)",
-					"@executable_path/Frameworks",
-				);
+                               HEADER_SEARCH_PATHS = (
+                                       "$(inherited)",
+                                       "$(PROJECT_DIR)/Frameworks/ios.xcframework/ios-arm64/Mobile.framework/Headers",
+                                       "$(PROJECT_DIR)/Frameworks/ios.xcframework/ios-arm64_x86_64-simulator/Mobile.framework/Headers",
+                               );
+                               LD_RUNPATH_SEARCH_PATHS = (
+                                       "$(inherited)",
+                                       "@executable_path/Frameworks",
+                               );
+                               FRAMEWORK_SEARCH_PATHS = (
+                                       "$(inherited)",
+                                       "$(PROJECT_DIR)/Frameworks/ios.xcframework/ios-arm64",
+                                       "$(PROJECT_DIR)/Frameworks/ios.xcframework/ios-arm64_x86_64-simulator",
+                               );
 				PRODUCT_BUNDLE_IDENTIFIER = com.example.dateiexplorerTachograph;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_OBJC_BRIDGING_HEADER = "Runner/Runner-Bridging-Header.h";
@@ -708,10 +728,20 @@
 				DEVELOPMENT_TEAM = BLDQHTYPD9;
 				ENABLE_BITCODE = NO;
 				INFOPLIST_FILE = Runner/Info.plist;
-				LD_RUNPATH_SEARCH_PATHS = (
-					"$(inherited)",
-					"@executable_path/Frameworks",
-				);
+                               HEADER_SEARCH_PATHS = (
+                                       "$(inherited)",
+                                       "$(PROJECT_DIR)/Frameworks/ios.xcframework/ios-arm64/Mobile.framework/Headers",
+                                       "$(PROJECT_DIR)/Frameworks/ios.xcframework/ios-arm64_x86_64-simulator/Mobile.framework/Headers",
+                               );
+                               LD_RUNPATH_SEARCH_PATHS = (
+                                       "$(inherited)",
+                                       "@executable_path/Frameworks",
+                               );
+                               FRAMEWORK_SEARCH_PATHS = (
+                                       "$(inherited)",
+                                       "$(PROJECT_DIR)/Frameworks/ios.xcframework/ios-arm64",
+                                       "$(PROJECT_DIR)/Frameworks/ios.xcframework/ios-arm64_x86_64-simulator",
+                               );
 				PRODUCT_BUNDLE_IDENTIFIER = com.example.dateiexplorerTachograph;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_OBJC_BRIDGING_HEADER = "Runner/Runner-Bridging-Header.h";
