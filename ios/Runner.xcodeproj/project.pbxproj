@@ -502,10 +502,20 @@
 				DEVELOPMENT_TEAM = BLDQHTYPD9;
 				ENABLE_BITCODE = NO;
 				INFOPLIST_FILE = Runner/Info.plist;
-				LD_RUNPATH_SEARCH_PATHS = (
-					"$(inherited)",
-					"@executable_path/Frameworks",
-				);
+                               HEADER_SEARCH_PATHS = (
+                                       "$(inherited)",
+                                       "$(PROJECT_DIR)/Frameworks/ios.xcframework/ios-arm64/Mobile.framework/Headers",
+                                       "$(PROJECT_DIR)/Frameworks/ios.xcframework/ios-arm64_x86_64-simulator/Mobile.framework/Headers",
+                               );
+                               LD_RUNPATH_SEARCH_PATHS = (
+                                       "$(inherited)",
+                                       "@executable_path/Frameworks",
+                               );
+                               FRAMEWORK_SEARCH_PATHS = (
+                                       "$(inherited)",
+                                       "$(PROJECT_DIR)/Frameworks/ios.xcframework/ios-arm64",
+                                       "$(PROJECT_DIR)/Frameworks/ios.xcframework/ios-arm64_x86_64-simulator",
+                               );
 				PRODUCT_BUNDLE_IDENTIFIER = com.example.dateiexplorerTachograph;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_OBJC_BRIDGING_HEADER = "Runner/Runner-Bridging-Header.h";
@@ -685,10 +695,20 @@
 				DEVELOPMENT_TEAM = BLDQHTYPD9;
 				ENABLE_BITCODE = NO;
 				INFOPLIST_FILE = Runner/Info.plist;
-				LD_RUNPATH_SEARCH_PATHS = (
-					"$(inherited)",
-					"@executable_path/Frameworks",
-				);
+                               HEADER_SEARCH_PATHS = (
+                                       "$(inherited)",
+                                       "$(PROJECT_DIR)/Frameworks/ios.xcframework/ios-arm64/Mobile.framework/Headers",
+                                       "$(PROJECT_DIR)/Frameworks/ios.xcframework/ios-arm64_x86_64-simulator/Mobile.framework/Headers",
+                               );
+                               LD_RUNPATH_SEARCH_PATHS = (
+                                       "$(inherited)",
+                                       "@executable_path/Frameworks",
+                               );
+                               FRAMEWORK_SEARCH_PATHS = (
+                                       "$(inherited)",
+                                       "$(PROJECT_DIR)/Frameworks/ios.xcframework/ios-arm64",
+                                       "$(PROJECT_DIR)/Frameworks/ios.xcframework/ios-arm64_x86_64-simulator",
+                               );
 				PRODUCT_BUNDLE_IDENTIFIER = com.example.dateiexplorerTachograph;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_OBJC_BRIDGING_HEADER = "Runner/Runner-Bridging-Header.h";
@@ -708,10 +728,20 @@
 				DEVELOPMENT_TEAM = BLDQHTYPD9;
 				ENABLE_BITCODE = NO;
 				INFOPLIST_FILE = Runner/Info.plist;
-				LD_RUNPATH_SEARCH_PATHS = (
-					"$(inherited)",
-					"@executable_path/Frameworks",
-				);
+                               HEADER_SEARCH_PATHS = (
+                                       "$(inherited)",
+                                       "$(PROJECT_DIR)/Frameworks/ios.xcframework/ios-arm64/Mobile.framework/Headers",
+                                       "$(PROJECT_DIR)/Frameworks/ios.xcframework/ios-arm64_x86_64-simulator/Mobile.framework/Headers",
+                               );
+                               LD_RUNPATH_SEARCH_PATHS = (
+                                       "$(inherited)",
+                                       "@executable_path/Frameworks",
+                               );
+                               FRAMEWORK_SEARCH_PATHS = (
+                                       "$(inherited)",
+                                       "$(PROJECT_DIR)/Frameworks/ios.xcframework/ios-arm64",
+                                       "$(PROJECT_DIR)/Frameworks/ios.xcframework/ios-arm64_x86_64-simulator",
+                               );
 				PRODUCT_BUNDLE_IDENTIFIER = com.example.dateiexplorerTachograph;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_OBJC_BRIDGING_HEADER = "Runner/Runner-Bridging-Header.h";
