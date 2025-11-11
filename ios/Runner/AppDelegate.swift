@@ -8,7 +8,9 @@ import UIKit
     didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?
   ) -> Bool {
     GeneratedPluginRegistrant.register(with: self)
-    TachographNativePlugin.register(with: self)
+    if let registrar = self.registrar(forPlugin: "TachographNativePlugin") {
+      TachographNativePlugin.register(with: registrar)
+    }
     return super.application(application, didFinishLaunchingWithOptions: launchOptions)
   }
 }
