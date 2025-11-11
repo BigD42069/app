@@ -54,6 +54,11 @@ build/gomobile/1.2.0/apple/Tachograph.xcframework
 build/gomobile/1.2.0/checksums.txt
 ```
 
+Für den Flutter-Client werden die Dateien anschließend an folgende Stellen kopiert:
+
+- `android/app/libs/android.lib.aar`
+- `ios/Frameworks/ios.xcframework`
+
 ### Manuelle Ausführung
 
 Der Workflow, den das Skript automatisiert, lautet:
