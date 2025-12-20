@@ -46,6 +46,9 @@ import 'package:timezone/data/latest.dart' as tz;
 import 'package:timezone/timezone.dart' as tz;
 
 import 'parser_test_page.dart';
+import 'day_detail_page.dart';
+import 'calendar_events_store.dart';
+import 'places_map_view.dart';
 
 /* =============================================================================
    Anwendungseinstieg & Bootstrap
@@ -63,6 +66,8 @@ Future<void> main() async {
   // Stellt sicher, dass WidgetsBinding und Plattformkanäle vor async-Calls
   // initialisiert sind. Pflicht bei await in main().
   WidgetsFlutterBinding.ensureInitialized();
+  // WebView (für Karte) frühzeitig anwerfen, damit spätere Nutzung ruckelfrei startet.
+  unawaited(PlacesMapView.warmUp());
 
   // 1) Timezone-Daten und Notification-Plugin vorbereiten. Dadurch kann der
   //    NotificationService später sofort Erinnerungen planen.
@@ -643,7 +648,8 @@ class KalenderApp extends StatelessWidget {
           if (b == Brightness.dark) {
             // === DARK: exakt wie dein „vorher“ – tiefschwarz, kein Grau
             final cs = csSeed.copyWith(
-              surface: const Color(0xFF121212),
+              surface: Colors.black,
+              background: Colors.black,
               surfaceContainerHighest: const Color(0xFF1E1E1E),
               onSurface: onBlack,
               outlineVariant: Colors.white24,
@@ -823,7 +829,7 @@ class _ShellState extends State<Shell> with WidgetsBindingObserver {
                   context.r.gutter,
                   0,
                   context.r.gutter,
-                  context.r.gutter,
+                  context.r.gutter + 12,
                 ),
                 child: GlassBottomBarSegmented(
                   selectedIndex: selectedIndex,
@@ -939,7 +945,7 @@ class _DockedSearchOverlay extends StatelessWidget {
       curve: Curves.easeOutCubic,
       left: 0,
       right: 0,
-      bottom: kbOpen ? (insets + 12.0) : context.r.gutter,
+      bottom: kbOpen ? (insets + 24.0) : (context.r.gutter + 12),
       child: LayoutBuilder(
         builder: (context, constraints) {
           final openWidth = constraints.maxWidth - (context.r.gutter * 2);
@@ -1044,18 +1050,42 @@ class ListPage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final text = Theme.of(context).textTheme;
     final cs = Theme.of(context).colorScheme;
-    return Center(
-      child: Text(
-        'Keine Übertragungen verfügbar',
-        style: TextStyle(
-          fontSize: 18,
-          fontWeight: FontWeight.w600,
-          color: cs.onSurface,
-        ),
-        textAlign: TextAlign.center,
+    return Padding(
+      padding: EdgeInsets.fromLTRB(context.r.gutter, 64, context.r.gutter, 12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text('Menü', style: text.displaySmall?.copyWith(fontWeight: FontWeight.w800, height: 1.05)),
+          const SizedBox(height: 6),
+          Divider(color: cs.outlineVariant, height: 1),
+          const SizedBox(height: 22),
+          Center(child: _ListNavButton(label: 'Übersicht', onPressed: () {})),
+          const SizedBox(height: 14),
+          Center(child: _ListNavButton(label: 'Technische Daten', onPressed: () {})),
+          const SizedBox(height: 14),
+          Center(child: _ListNavButton(label: 'Statistiken', onPressed: () {})),
+          const SizedBox(height: 14),
+          Center(child: _ListNavButton(label: 'Listendarstellung', onPressed: () {})),
+          const SizedBox(height: 14),
+          Center(child: _ListNavButton(label: 'Verstöße', onPressed: () {})),
+          const SizedBox(height: 14),
+          Center(child: _ListNavButton(label: 'Ereignisse', onPressed: () {})),
+        ],
       ),
     );
+  }
+}
+
+class _ListNavButton extends StatelessWidget {
+  const _ListNavButton({required this.label, required this.onPressed});
+  final String label;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    return PillLink(label: label, onTap: onPressed);
   }
 }
 
@@ -2472,21 +2502,35 @@ class CalendarHomePage extends StatefulWidget {
 
 /// Verwaltet ScrollController, Animationen und Dialoginteraktionen.
 class _CalendarHomePageState extends State<CalendarHomePage> {
-  final ScrollController _scroll = ScrollController();
-  static final DateTime _startMonth = DateTime(2025, 6, 1);
+  late final ScrollController _scroll;
+  static final DateTime _startMonth = DateTime(2021, 1, 1);
   static final DateTime _endMonth = DateTime(2100, 12, 1);
   late final List<DateTime> months;
   late final List<GlobalKey> _monthKeys;
   late String _visibleMonthText;
+  late DateTime _initialMonth;
+  int _scrollAttempts = 0;
+  double _estimatedMonthHeight = 600;
 
   @override
   void initState() {
-    super.initState();
     months = _generateMonths(_startMonth, _endMonth);
     _monthKeys = List.generate(months.length, (_) => GlobalKey());
-    _visibleMonthText = _fmtMonth(_startMonth);
+    final today = DateTime.now();
+    final start = DateTime(_startMonth.year, _startMonth.month, 1);
+    _initialMonth = today.isBefore(start)
+        ? start
+        : DateTime(today.year, today.month, 1);
+    final idx = months.indexWhere(
+      (m) => m.year == _initialMonth.year && m.month == _initialMonth.month,
+    );
+    _scroll = ScrollController();
+
+    super.initState();
+    _visibleMonthText = _fmtMonth(_initialMonth);
     _scroll.addListener(_handleScroll);
-    WidgetsBinding.instance.addPostFrameCallback((_) => _handleScroll());
+    WidgetsBinding.instance
+        .addPostFrameCallback((_) => _jumpToMonth(_initialMonth, retry: 12));
   }
 
   @override
@@ -2529,6 +2573,37 @@ class _CalendarHomePageState extends State<CalendarHomePage> {
     current ??= months.first;
     final text = _fmtMonth(current);
     if (text != _visibleMonthText) setState(() => _visibleMonthText = text);
+  }
+
+  void _jumpToMonth(DateTime targetMonth, {int retry = 0}) {
+    final idx = months.indexWhere(
+      (m) => m.year == targetMonth.year && m.month == targetMonth.month,
+    );
+    if (idx < 0) {
+      return;
+    }
+    final ctx = _monthKeys[idx].currentContext;
+    if (ctx != null) {
+      Scrollable.ensureVisible(
+        ctx,
+        duration: Duration.zero,
+        alignment: 0.1,
+      ).then((_) => setState(() => _visibleMonthText = _fmtMonth(targetMonth)));
+      return;
+    }
+    if (_scroll.hasClients) {
+      final max = _scroll.position.maxScrollExtent;
+      if (max > 0) {
+        final fraction = (months.length > 1) ? idx / (months.length - 1) : 0.0;
+        final target = (max * fraction).clamp(0.0, max);
+        _scroll.jumpTo(target);
+      }
+    }
+    if (retry > 0) {
+      WidgetsBinding.instance.addPostFrameCallback(
+        (_) => _jumpToMonth(targetMonth, retry: retry - 1),
+      );
+    }
   }
 
   String _fmtMonth(DateTime m) {
@@ -2601,6 +2676,26 @@ class _LargeTitleHeader extends SliverPersistentHeaderDelegate {
     bool overlapsContent,
   ) {
     final top = MediaQuery.of(context).padding.top;
+    final cs = Theme.of(context).colorScheme;
+    final text = Theme.of(context).textTheme;
+    final titleStyle = (text.headlineMedium ?? text.titleLarge)?.copyWith(
+      fontWeight: FontWeight.w800,
+      height: 1.05,
+    );
+
+    Widget circleIcon(IconData icon) {
+      return Container(
+        width: 38,
+        height: 38,
+        decoration: BoxDecoration(
+          color: cs.surfaceContainerHighest,
+          borderRadius: BorderRadius.circular(context.r.pillRadius(true)),
+          border: Border.all(color: cs.outlineVariant.withOpacity(0.5)),
+        ),
+        child: Icon(icon, size: 20, color: cs.onSurface),
+      );
+    }
+
     return Container(
       color: Theme.of(context).colorScheme.surface,
       padding: EdgeInsets.fromLTRB(
@@ -2610,11 +2705,21 @@ class _LargeTitleHeader extends SliverPersistentHeaderDelegate {
         10,
       ),
       alignment: Alignment.centerLeft,
-      child: Text(
-        monthText,
-        maxLines: 1,
-        overflow: TextOverflow.ellipsis,
-        style: Theme.of(context).textTheme.headlineLarge,
+      child: Row(
+        children: [
+          Expanded(
+            child: Text(
+              monthText,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: titleStyle,
+            ),
+          ),
+          const SizedBox(width: 12),
+          circleIcon(CupertinoIcons.line_horizontal_3_decrease_circle),
+          const SizedBox(width: 10),
+          circleIcon(CupertinoIcons.question_circle),
+        ],
       ),
     );
   }
@@ -2714,7 +2819,25 @@ class MonthSection extends StatelessWidget {
             ),
           ),
         ),
-        MonthGrid(month: month, cellAspect: 0.95), // etwas höher = größer
+        MonthGrid(
+          month: month,
+          cellAspect: 0.95, // etwas höher = größer
+          eventDays: calendarEventsStore.allDates,
+          alertDays: calendarEventsStore.alertDates,
+          onDayTap: (date) {
+            final key = calendarEventsStore.keyFromDate(date);
+            if (!calendarEventsStore.allDates.value.contains(key)) return;
+            final activity =
+                calendarEventsStore.activityFor(date) ?? DayActivity(date: date);
+            final events = calendarEventsStore.eventsFor(date);
+            if (activity == null && events == null) return;
+            Navigator.of(context).push(
+              MaterialPageRoute(
+                builder: (_) => DayDetailPage(activity: activity, events: events),
+              ),
+            );
+          },
+        ),
       ],
     );
   }
@@ -2742,17 +2865,23 @@ class MonthSection extends StatelessWidget {
 
 /// Baut das Monatsgitter mit Tagen, Markierungen und heutigen Datum.
 class MonthGrid extends StatelessWidget {
-  const MonthGrid({super.key, required this.month, this.cellAspect});
+  const MonthGrid({
+    super.key,
+    required this.month,
+    this.cellAspect,
+    required this.eventDays,
+    required this.alertDays,
+    this.onDayTap,
+  });
 
   final DateTime month;
   final double? cellAspect;
+  final ValueListenable<Set<int>> eventDays;
+  final ValueListenable<Set<int>> alertDays;
+  final void Function(DateTime date)? onDayTap;
 
-  bool _hasDot(DateTime d) {
-    // deterministisches "zufälliges" Muster (wie im Original)
-    final seed = d.year * 10000 + d.month * 100 + d.day;
-    final rng = Random(seed);
-    return rng.nextInt(7) == 0;
-  }
+  int _dayKey(DateTime d) =>
+      DateTime(d.year, d.month, d.day).millisecondsSinceEpoch;
 
   @override
   Widget build(BuildContext context) {
@@ -2767,89 +2896,134 @@ class MonthGrid extends StatelessWidget {
     final rows = (totalCells / 7).ceil();
 
     Widget divider() => Container(
-      margin: const EdgeInsets.symmetric(vertical: 12),
-      height: 1,
-      color: cs.outlineVariant,
-    );
+          margin: const EdgeInsets.symmetric(vertical: 12),
+          height: 1,
+          color: cs.outlineVariant,
+        );
 
     final aspect = cellAspect ?? context.r.gridAspect;
 
-    return Column(
-      children: [
-        for (int r = 0; r < rows; r++) ...[
-          Row(
-            children: List.generate(7, (c) {
-              final idx = r * 7 + c;
-              final dayNum = idx - firstWeekday + 1;
-              if (dayNum < 1 || dayNum > daysInMonth) {
-                return const Expanded(child: SizedBox.shrink());
-              }
+    return ValueListenableBuilder<Set<int>>(
+      valueListenable: alertDays,
+      builder: (context, alerts, __) {
+        return ValueListenableBuilder<Set<int>>(
+          valueListenable: eventDays,
+          builder: (context, days, _) {
+            bool restOnly(DateTime date) {
+              final activity = calendarEventsStore.activityFor(date);
+              if (activity == null || activity.activities.isEmpty) return false;
+              return activity.activities.every(
+                (a) => (a.activity ?? '').toLowerCase().contains('ruhe'),
+              );
+            }
+            return Column(
+              children: [
+                for (int r = 0; r < rows; r++) ...[
+                  Row(
+                    children: List.generate(7, (c) {
+                      final idx = r * 7 + c;
+                      final dayNum = idx - firstWeekday + 1;
+                      if (dayNum < 1 || dayNum > daysInMonth) {
+                        return const Expanded(child: SizedBox.shrink());
+                      }
 
-              final date = DateTime(month.year, month.month, dayNum);
-              final isToday =
-                  date.year == today.year &&
-                  date.month == today.month &&
-                  date.day == today.day;
-              final showDot = _hasDot(date);
+                      final date = DateTime(month.year, month.month, dayNum);
+                      final isToday = date.year == today.year &&
+                          date.month == today.month &&
+                          date.day == today.day;
+                      final key = _dayKey(date);
+                      final showDot = days.contains(key) || alerts.contains(key);
+                      final hasAlert = alerts.contains(key);
+                      final isRestOnly = !hasAlert && days.contains(key) && restOnly(date);
 
-              return Expanded(
-                child: AspectRatio(
-                  aspectRatio: aspect,
-                  child: Center(
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        if (isToday)
-                          Container(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 8,
-                              vertical: 3,
-                            ),
-                            decoration: BoxDecoration(
-                              color: cs.secondary,
-                              shape: BoxShape.circle,
-                            ),
-                            child: Text(
-                              '$dayNum',
-                              style: textTheme.bodyMedium!.copyWith(
-                                color: Colors.black,
-                                fontWeight: FontWeight.w700,
-                                fontSize: context.r.dayFont + 2,
+                      return Expanded(
+                        child: AspectRatio(
+                          aspectRatio: aspect,
+                          child: GestureDetector(
+                            onTap: (showDot && !isRestOnly && onDayTap != null)
+                                ? () => onDayTap!(date)
+                                : null,
+                            behavior: HitTestBehavior.opaque,
+                            child: Center(
+                              child: Column(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  if (isToday)
+                                    Container(
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 8,
+                                        vertical: 3,
+                                      ),
+                                      decoration: BoxDecoration(
+                                        color: cs.secondary,
+                                        shape: BoxShape.circle,
+                                      ),
+                                      child: Text(
+                                        '$dayNum',
+                                        style: textTheme.bodyMedium!.copyWith(
+                                          color: Colors.black,
+                                          fontWeight: FontWeight.w700,
+                                          fontSize: context.r.dayFont + 2,
+                                        ),
+                                      ),
+                                    )
+                                  else
+                                    Text(
+                                      '$dayNum',
+                                      style: textTheme.bodyMedium!.copyWith(
+                                        fontSize: context.r.dayFont + 2,
+                                        color: cs.onSurface.withOpacity(0.92),
+                                      ),
+                                    ),
+                                  const SizedBox(height: 3),
+                                  if (hasAlert)
+                                    Icon(Icons.error_outline,
+                                        size: context.r.dotSize + 5,
+                                        color: cs.error)
+                                  else if (isRestOnly)
+                                    Container(
+                                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                      decoration: BoxDecoration(
+                                        color: cs.surfaceContainerHighest,
+                                        borderRadius: BorderRadius.circular(10),
+                                        border: Border.all(color: cs.secondary, width: 1.2),
+                                      ),
+                                      child: Text(
+                                        'R',
+                                        style: textTheme.bodySmall?.copyWith(
+                                          fontWeight: FontWeight.w700,
+                                          color: cs.secondary,
+                                        ),
+                                      ),
+                                    )
+                                  else
+                                    Opacity(
+                                      opacity: showDot ? 1 : 0,
+                                      child: Container(
+                                        width: context.r.dotSize + 1,
+                                        height: context.r.dotSize + 1,
+                                        decoration: BoxDecoration(
+                                          color: cs.secondary,
+                                          shape: BoxShape.circle,
+                                        ),
+                                      ),
+                                    ),
+                                ],
                               ),
-                            ),
-                          )
-                        else
-                          Text(
-                            '$dayNum',
-                            style: textTheme.bodyMedium!.copyWith(
-                              fontSize: context.r.dayFont + 2,
-                              color: cs.onSurface.withOpacity(0.92),
-                            ),
-                          ),
-                        // fester Slot für den Marker – Zahl bleibt auf gleicher Höhe
-                        const SizedBox(height: 3),
-                        Opacity(
-                          opacity: showDot ? 1 : 0, // behält Größe immer bei
-                          child: Container(
-                            width: context.r.dotSize + 1,
-                            height: context.r.dotSize + 1,
-                            decoration: BoxDecoration(
-                              color: cs.secondary,
-                              shape: BoxShape.circle,
                             ),
                           ),
                         ),
-                      ],
-                    ),
+                      );
+                    }),
                   ),
-                ),
-              );
-            }),
-          ),
-          if (r < rows - 1) divider(),
-        ],
-        divider(),
-      ],
+                  if (r < rows - 1) divider(),
+                ],
+                divider(),
+              ],
+            );
+          },
+        );
+      },
     );
   }
 }

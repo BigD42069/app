@@ -308,7 +308,7 @@ private final class GomobileBinding {
   }
 
   private static func invoke(selector: Selector, on object: NSObject, with value: Any?) {
-    guard let methodSignature = type(of: object).instanceMethodSignature(for: selector) else {
+    guard let method = class_getInstanceMethod(type(of: object), selector) else {
       object.perform(selector, with: value)
       return
     }
@@ -319,7 +319,8 @@ private final class GomobileBinding {
       return
     }
 
-    guard let argumentCString = method_copyArgumentType(method, 2) else {
+    let argumentCString: UnsafeMutablePointer<Int8>? = method_copyArgumentType(method, 2)
+    guard let argumentCString else {
       object.perform(selector, with: value)
       return
     }
@@ -406,22 +407,26 @@ private final class GomobileBinding {
   private static func boolValue(from object: NSObject, selectors: [String]) -> Bool? {
     for name in selectors {
       let selector = NSSelectorFromString(name)
-      if object.responds(to: selector) {
-        if let signature = type(of: object).instanceMethodSignature(for: selector) {
-          let returnType = String(cString: signature.methodReturnType)
-          if returnType == "B" || returnType == "c" {
-            typealias BoolFunction = @convention(c) (AnyObject, Selector) -> Bool
-            let methodPointer = object.method(for: selector)
-            let function = unsafeBitCast(methodPointer, to: BoolFunction.self)
-            return function(object, selector)
+      if object.responds(to: selector), let method = class_getInstanceMethod(type(of: object), selector) {
+        let returnTypeCString: UnsafeMutablePointer<Int8>? = method_copyReturnType(method)
+        guard let returnTypeCString else {
+          continue
+        }
+        defer { free(returnTypeCString) }
+
+        let returnType = String(cString: returnTypeCString)
+        if returnType == "B" || returnType == "c" {
+          typealias BoolFunction = @convention(c) (AnyObject, Selector) -> Bool
+          let methodPointer = object.method(for: selector)
+          let function = unsafeBitCast(methodPointer, to: BoolFunction.self)
+          return function(object, selector)
+        }
+        if returnType == "@" {
+          if let value = object.perform(selector)?.takeUnretainedValue() as? NSNumber {
+            return value.boolValue
           }
-          if returnType == "@" {
-            if let value = object.perform(selector)?.takeUnretainedValue() as? NSNumber {
-              return value.boolValue
-            }
-            if let value = object.perform(selector)?.takeUnretainedValue() as? NSString {
-              return value.boolValue
-            }
+          if let value = object.perform(selector)?.takeUnretainedValue() as? NSString {
+            return value.boolValue
           }
         }
       }
