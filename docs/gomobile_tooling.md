@@ -49,15 +49,15 @@ export GOMOBILE_BIND_PACKAGE=github.com/company/tachograph/mobile
 Standardmäßig landen die Artefakte in `build/gomobile/<VERSION>/`:
 
 ```
-build/gomobile/1.2.0/android/tachograph-1.2.0.aar
-build/gomobile/1.2.0/apple/Tachograph.xcframework
+build/gomobile/1.2.0/android/mobile-1.2.0.aar
+build/gomobile/1.2.0/apple/Mobile.xcframework
 build/gomobile/1.2.0/checksums.txt
 ```
 
 Für den Flutter-Client werden die Dateien anschließend an folgende Stellen kopiert:
 
-- `android/app/libs/android.lib.aar`
-- `ios/Frameworks/ios.xcframework` (enthält die Slices `ios-arm64/Mobile.framework`
+- `android/app/libs/mobile.aar`
+- `ios/Frameworks/Mobile.xcframework` (enthält die Slices `ios-arm64/Mobile.framework`
   für physische Geräte sowie `ios-arm64_x86_64-simulator/Mobile.framework` für
   Simulatoren samt Header-Dateien `Mobile.h` und `Mobile.objc.h`)
 
@@ -71,14 +71,14 @@ GOMOBILE_BIND_PACKAGE=github.com/company/tachograph/mobile \
   gomobile bind \
     -target=android/arm64,android/amd64 \
     -androidapi 24 \
-    -o build/gomobile/1.2.0/android/tachograph-1.2.0.aar \
+    -o build/gomobile/1.2.0/android/mobile-1.2.0.aar \
     "$GOMOBILE_BIND_PACKAGE"
 
 # iOS
 GOMOBILE_BIND_PACKAGE=github.com/company/tachograph/mobile \
   gomobile bind \
     -target=ios,iossimulator \
-    -o build/gomobile/1.2.0/apple/Tachograph.xcframework \
+    -o build/gomobile/1.2.0/apple/Mobile.xcframework \
     "$GOMOBILE_BIND_PACKAGE"
 ```
 

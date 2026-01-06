@@ -28,8 +28,8 @@ APPLE_OUT="$OUTPUT_ROOT/apple"
 
 mkdir -p "$ANDROID_OUT" "$APPLE_OUT"
 
-AAR_PATH="$ANDROID_OUT/tachograph-$VERSION.aar"
-XCFRAMEWORK_PATH="$APPLE_OUT/Tachograph.xcframework"
+AAR_PATH="$ANDROID_OUT/mobile-$VERSION.aar"
+XCFRAMEWORK_PATH="$APPLE_OUT/Mobile.xcframework"
 CHECKSUM_PATH="$OUTPUT_ROOT/checksums.txt"
 
 # Android build (arm64-v8a & x86_64)

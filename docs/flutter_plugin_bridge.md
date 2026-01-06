@@ -7,12 +7,13 @@ Threading- und Abbruchverhalten.
 ## Plattform-spezifische Implementierung
 
 - **Android (`android/app/src/...`)** bindet die Datei
-  `android/app/libs/android.lib.aar`. Der Kotlin-Plugin-Code
-  (`TachographNativePlugin.kt`) instanziiert `mobile.Parser` aus diesem AAR und
-  setzt den `go.Seq`-Kontext, bevor `parseDdd` aufgerufen wird.
-- **iOS (`ios/Runner/...`)** verlinkt `ios/Frameworks/ios.xcframework`. Die
-  Swift-Implementierung importiert das Framework via `canImport(Mobile)` und
-  ruft `MobileParser.parseDdd` mit identischen Optionen auf.
+  `android/app/libs/mobile.aar`. Der Kotlin-Plugin-Code
+  (`TachographNativePlugin.kt`) instanziiert den Parser via
+  `mobile.Mobile.createParser(...)` und ruft `parseCard`, `parseVehicleUnit`
+  oder `parseWithTimeout` auf.
+- **iOS (`ios/Runner/...`)** verlinkt `ios/Frameworks/Mobile.xcframework`. Die
+  Swift-Implementierung importiert das Framework (Modul `Mobile`) und ruft
+  `MobileCreateParser(...)` sowie `parseCard`/`parseVehicleUnit`/`parseWithTimeout` auf.
 
 Beide Plattformen liefern somit den gleichen Kanal-Contract, greifen aber auf
 ihre jeweilige native Bibliothek zurück.
@@ -30,8 +31,8 @@ ihre jeweilige native Bibliothek zurück.
 | `source`         | `String`       | "vu" (Fahrzeuggerät) oder "card" |
 | `pks1Dir`        | `String`       | Optional: Absoluter Pfad zu den Zertifikaten der ersten Generation |
 | `pks2Dir`        | `String`       | Optional: Absoluter Pfad zu den Zertifikaten der zweiten Generation |
-| `strictMode`     | `bool`         | Aktiviert striktes Zertifikats-Handling (Default: `false`) |
-| `timeoutMs`      | `int?`         | Optionales Timeout (Millisekunden); die Dart-Seite sendet standardmäßig 30.000 |
+| `strictMode`     | `bool`         | Der gomobile-Parser ignoriert diesen Wert aktuell |
+| `timeoutMs`      | `int?`         | Optionales Timeout (Millisekunden); `0` oder `<0` bedeutet kein Timeout |
 
 ### Rückgabe
 
@@ -39,7 +40,7 @@ Die native Seite liefert eine Map mit folgenden Schlüsseln:
 
 | Schlüssel            | Typ        | Beschreibung |
 | -------------------- | ---------- | ------------ |
-| `status`             | `String`   | `ok`, `error` oder `cancelled` |
+| `status`             | `String`   | `ok` (Fehler kommen als PlatformException) |
 | `json`               | `String?`  | Serialisierte Payload bei Erfolg |
 | `verified`           | `bool`     | Ergebnis der Signaturprüfung |
 | `verificationLog`    | `String?`  | Detaillog der Prüfschritte |
@@ -56,9 +57,8 @@ Die native Seite liefert eine Map mit folgenden Schlüsseln:
 ## Abbruch/Timeout
 
 - Flutter löst ein Timeout aus, indem `timeoutMs` gesetzt wird.
-- Zusätzlich kann Flutter `cancelActiveParse` aufrufen. Der native Code stoppt
-  daraufhin laufende Jobs (z. B. via Kontext-Abbruch).
-- Der Cancel-Pfad propagiert den Status `cancelled` zurück.
+- `cancelActiveParse` ist derzeit ein No-op, weil die Mobile-API keinen Cancel
+  anbietet.
 
 ## Fehlerbehandlung
 

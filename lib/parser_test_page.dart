@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter/foundation.dart';
 import 'calendar_events_store.dart';
+import 'ddd_parser.dart';
 
 /// Seite zum manuellen Testen des Tachograph-Parsers innerhalb der App.
 class ParserTestPage extends StatefulWidget {
@@ -21,8 +22,7 @@ class _ParserTestPageState extends State<ParserTestPage> {
   late final Future<_ParserTestOutcome> _future = _cached ??= _load();
 
   Future<_ParserTestOutcome> _load() async {
-    const assetPath = 'assets/Example_files/output.json';
-    final rawJson = await rootBundle.loadString(assetPath);
+    final rawJson = await _loadRawJson();
 
     // JSON-Parsing im Hintergrund, um UI-Jank zu vermeiden.
     final parsed = await compute(_parseJsonAndSummary, rawJson);
@@ -47,6 +47,34 @@ class _ParserTestPageState extends State<ParserTestPage> {
       technicalData: technicalData,
       eventsAndFaults: eventsAndFaults,
     );
+  }
+
+  Future<String> _loadRawJson() async {
+    const dddAsset = 'assets/Example_files/LRO.DDD';
+    try {
+      final byteData = await rootBundle.load(dddAsset);
+      final payload = byteData.buffer.asUint8List();
+      final result = await DddParser.instance.parse(
+        data: payload,
+        source: DddSource.vu,
+        strictMode: false,
+      );
+      final raw = result.jsonString;
+      debugPrint(
+        'ParserTest: DDD parse (vu) status=${result.status} '
+        'verified=${result.verified} jsonLen=${raw?.length ?? 0}',
+      );
+      if (result.isOk && raw != null && raw.isNotEmpty) {
+        return raw;
+      }
+      throw Exception(
+        'DDD parse failed (vu): status=${result.status} json empty=${raw == null || raw.isEmpty}',
+      );
+    } on ParserException catch (err) {
+      throw Exception('DDD parse failed (vu): ${err.code} ${err.message}');
+    } catch (err) {
+      throw Exception('DDD parse failed (vu): $err');
+    }
   }
 
   @override

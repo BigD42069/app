@@ -95,9 +95,8 @@ class DayDetailPage extends StatelessWidget {
           _Section(
             title: 'Kartendaten',
             isEmpty: activity.cards.isEmpty,
-            collapsible: true,
-            preview: _CardDetailsList(cards: activity.cards, previewOnly: true),
-            child: _CardDetailsList(cards: activity.cards),
+            child: _CardDetailsList(cards: activity.cards, expandable: true),
+            collapsible: false,
           ),
           const SizedBox(height: 12),
           _Section(
@@ -107,7 +106,7 @@ class DayDetailPage extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                _ActivityCharts(entries: activity.activities),
+                _ActivityCharts(entries: activity.activities, cards: activity.cards),
               ],
             ),
           ),
@@ -221,6 +220,7 @@ class DayDetailPage extends StatelessWidget {
                       places: activity.places,
                       gnss: activity.gnss,
                       loads: activity.loads,
+                      borderCrossings: activity.borderCrossings,
                     ),
                   ),
                 ],
@@ -313,6 +313,7 @@ class _MapLegend extends StatelessWidget {
             _item('Automatischer Log', const Color(0xFFf6c400)),
             _item('Beladen', const Color(0xFF43a047)),
             _item('Entladen', const Color(0xFFe53935)),
+            _item('Grenzübergang', const Color(0xFF8e24aa)),
           ],
         ),
       ),
@@ -321,48 +322,114 @@ class _MapLegend extends StatelessWidget {
 }
 
 class _CardDetailsList extends StatelessWidget {
-  const _CardDetailsList({required this.cards, this.previewOnly = false});
+  const _CardDetailsList({required this.cards, required this.expandable});
   final List<CardRow> cards;
-  final bool previewOnly;
+  final bool expandable;
+
+  @override
+  Widget build(BuildContext context) {
+    final visibleCards = _dedupeCards(cards);
+    return Column(
+      children: [
+        for (final card in visibleCards)
+          _CardDetailsTile(card: card, expandable: expandable),
+      ],
+    );
+  }
+
+  List<CardRow> _dedupeCards(List<CardRow> input) {
+    final seen = <String>{};
+    final result = <CardRow>[];
+    for (final card in input) {
+      final number = card.number?.trim();
+      if (number == null || number.isEmpty) {
+        result.add(card);
+        continue;
+      }
+      if (seen.add(number)) {
+        result.add(card);
+      }
+    }
+    return result;
+  }
+}
+
+class _CardDetailsTile extends StatefulWidget {
+  const _CardDetailsTile({required this.card, required this.expandable});
+  final CardRow card;
+  final bool expandable;
+
+  @override
+  State<_CardDetailsTile> createState() => _CardDetailsTileState();
+}
+
+class _CardDetailsTileState extends State<_CardDetailsTile> {
+  late bool _expanded;
+
+  @override
+  void initState() {
+    super.initState();
+    _expanded = false;
+  }
+
+  @override
+  void didUpdateWidget(covariant _CardDetailsTile oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.expandable != widget.expandable && !widget.expandable) {
+      _expanded = false;
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
     final text = Theme.of(context).textTheme;
-    return Column(
-      children: [
-        for (final card in cards)
-          Container(
-            margin: const EdgeInsets.only(bottom: 12),
-            padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(
-              color: cs.surfaceContainerHighest,
-              borderRadius: BorderRadius.circular(12),
-              border: Border.all(color: cs.outlineVariant.withOpacity(0.5)),
-            ),
-              child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                _detailRow('Vorname', card.firstName, text),
-                _detailRow('Nachname', card.lastName, text),
-                _detailRow('Kartentyp', card.type, text),
-                _detailRow('Kartenausstellungsland', _countryLabel(card.country), text),
-                _detailRow('Kartennummer', card.number, text),
-                if (!previewOnly) ...[
-                  if (card.number != null) const Divider(height: 18),
-                  _detailRow('Gültig bis', _formatDate(card.expiry) ?? _formatDateTime(card.expiry) ?? card.expiry, text),
-                  _detailRow('Von', _formatDateTime(card.insertion) ?? card.insertion, text),
-                  _detailRow('Bis', _formatDateTime(card.withdrawal) ?? card.withdrawal, text),
-                  _detailRow('Km bei Einschub', card.odoInsertion, text),
-                  _detailRow('Km bei Entnahme', card.odoWithdrawal, text),
-                  _detailRow('Gefahrene Kilometer', _drivenKm(card.odoInsertion, card.odoWithdrawal), text),
-                  _detailRow('Land letztes Fahrzeug', _countryLabel(card.prevNation), text),
-                  _detailRow('Kennzeichen letztes Fahrzeug', card.prevPlate, text),
-                ],
-              ],
-            ),
-          ),
-      ],
+    final card = widget.card;
+
+    return GestureDetector(
+      behavior: HitTestBehavior.translucent,
+      onTap: widget.expandable ? () => setState(() => _expanded = !_expanded) : null,
+      child: Container(
+        margin: const EdgeInsets.only(bottom: 12),
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: cs.surfaceContainerHighest,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: cs.outlineVariant.withOpacity(0.5)),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            _detailRow('Vorname', card.firstName, text),
+            _detailRow('Nachname', card.lastName, text),
+            _detailRow('Kartentyp', card.type, text),
+            _detailRow('Kartenausstellungsland', _countryLabel(card.country), text),
+            _detailRow('Kartennummer', card.number, text),
+            if (widget.expandable && _expanded) ...[
+              if (card.number != null) const Divider(height: 18),
+              _detailRow('Gültig bis', _formatDate(card.expiry) ?? _formatDateTime(card.expiry) ?? card.expiry, text),
+              _detailRow('Von', _formatDateTime(card.insertion) ?? card.insertion, text),
+              _detailRow('Bis', _formatDateTime(card.withdrawal) ?? card.withdrawal, text),
+              _detailRow('Km bei Einschub', card.odoInsertion, text),
+              _detailRow('Km bei Entnahme', card.odoWithdrawal, text),
+              _detailRow('Gefahrene Kilometer', _drivenKm(card.odoInsertion, card.odoWithdrawal), text),
+              _detailRow('Land letztes Fahrzeug', _countryLabel(card.prevNation), text),
+              _detailRow('Kennzeichen letztes Fahrzeug', card.prevPlate, text),
+            ],
+            if (widget.expandable) ...[
+              const SizedBox(height: 6),
+              Align(
+                alignment: Alignment.center,
+                child: Icon(
+                  _expanded ? Icons.expand_less : Icons.expand_more,
+                  size: 18,
+                  color: cs.onSurface.withOpacity(0.55),
+                ),
+              ),
+            ],
+          ],
+        ),
+      ),
     );
   }
 
@@ -386,14 +453,21 @@ class _CardDetailsList extends StatelessWidget {
 }
 
 class _ActivityCharts extends StatelessWidget {
-  const _ActivityCharts({required this.entries});
+  const _ActivityCharts({required this.entries, required this.cards});
   final List<ActivityRow> entries;
+  final List<CardRow> cards;
 
   @override
   Widget build(BuildContext context) {
-    final intervals = _buildIntervals(entries);
-    if (intervals.isEmpty) return const SizedBox.shrink();
     final text = Theme.of(context).textTheme;
+    bool isCoDriverEntry(ActivityRow entry) {
+      final flag = entry.isCoDriver;
+      if (flag != null) return flag;
+      return _isCoDriverRole(entry.role);
+    }
+
+    final driverEntries = entries.where((e) => !isCoDriverEntry(e)).toList();
+    final coDriverEntries = entries.where((e) => isCoDriverEntry(e)).toList();
 
     Widget box(Widget child) {
       final cs = Theme.of(context).colorScheme;
@@ -407,35 +481,51 @@ class _ActivityCharts extends StatelessWidget {
       );
     }
 
+    Widget chartBlock(String title, List<ActivityRow> source) {
+      final intervals = _buildIntervals(source);
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(title, style: text.titleSmall),
+          const SizedBox(height: 6),
+          SizedBox(
+            height: 200,
+            child: box(
+              intervals.isEmpty
+                  ? Center(child: Text('Keine Daten vorhanden.', style: text.bodyMedium))
+                  : CustomPaint(painter: _ActivityChartPainter(intervals, Theme.of(context)), child: Container()),
+            ),
+          ),
+        ],
+      );
+    }
+
+    final cardTimeline = _buildCardTimeline(cards);
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         _LegendRow(
           items: const [
-            _LegendItem('Arbeit', Colors.redAccent),
             _LegendItem('Ruhe', Colors.blue),
             _LegendItem('Bereitschaft', Colors.yellow),
+            _LegendItem('Arbeiten', Colors.purple),
+            _LegendItem('Fahren', Colors.red),
           ],
         ),
         const SizedBox(height: 8),
-        SizedBox(
-          height: 200,
-          child: box(CustomPaint(painter: _ActivityChartPainter(intervals, Theme.of(context)), child: Container())),
-        ),
+        if (cardTimeline.isNotEmpty) ...[
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              for (final entry in cardTimeline) Text(entry, style: text.bodySmall),
+            ],
+          ),
+          const SizedBox(height: 8),
+        ],
+        chartBlock('Fahrer', driverEntries),
         const SizedBox(height: 12),
-        Text('Fahrzeugführung', style: text.titleSmall),
-        const SizedBox(height: 4),
-        _LegendRow(
-          items: const [
-            _LegendItem('Fahrer', Colors.purpleAccent),
-            _LegendItem('Beifahrer', Colors.green),
-          ],
-        ),
-        const SizedBox(height: 6),
-        SizedBox(
-          height: 160,
-          child: box(CustomPaint(painter: _RoleChartPainter(intervals, Theme.of(context)), child: Container())),
-        ),
+        chartBlock('Beifahrer', coDriverEntries),
       ],
     );
   }
@@ -484,10 +574,10 @@ class _ActivityChartPainter extends CustomPainter {
     final chartRect = Rect.fromLTWH(yLabelWidth, 0, size.width - yLabelWidth, size.height - 20);
     canvas.drawRect(chartRect, Paint()..color = cs.surface);
     for (final interval in intervals) {
-      _drawInterval(canvas, chartRect, interval, _activityColor(interval.activity));
+      _drawInterval(canvas, chartRect, interval, _workTypeColor(interval.workType, interval.activity));
     }
-    _drawGrid(canvas, chartRect, cs, theme.textTheme, yLabelWidth);
-    _drawXAxis(canvas, chartRect, cs, theme.textTheme);
+    _drawGrid(canvas, chartRect, theme.textTheme);
+    _drawXAxis(canvas, chartRect, theme.textTheme);
   }
 
   @override
@@ -495,33 +585,10 @@ class _ActivityChartPainter extends CustomPainter {
       oldDelegate.intervals != intervals || oldDelegate.theme != theme;
 }
 
-class _RoleChartPainter extends CustomPainter {
-  _RoleChartPainter(this.intervals, this.theme);
-  final List<_Interval> intervals;
-  final ThemeData theme;
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final cs = theme.colorScheme;
-    const yLabelWidth = 32.0;
-    final chartRect = Rect.fromLTWH(yLabelWidth, 0, size.width - yLabelWidth, size.height - 20);
-    canvas.drawRect(chartRect, Paint()..color = cs.surface);
-    for (final interval in intervals) {
-      _drawInterval(canvas, chartRect, interval, _roleColor(interval.role));
-    }
-    _drawGrid(canvas, chartRect, cs, theme.textTheme, yLabelWidth);
-    _drawXAxis(canvas, chartRect, cs, theme.textTheme);
-  }
-
-  @override
-  bool shouldRepaint(covariant _RoleChartPainter oldDelegate) =>
-      oldDelegate.intervals != intervals || oldDelegate.theme != theme;
-}
-
-void _drawGrid(Canvas canvas, Rect rect, ColorScheme cs, TextTheme textTheme, double yLabelWidth) {
+void _drawGrid(Canvas canvas, Rect rect, TextTheme textTheme) {
   final gridPaint = Paint()
-    ..color = cs.onSurface.withOpacity(0.22)
-    ..strokeWidth = 1;
+    ..color = Colors.black.withOpacity(0.5)
+    ..strokeWidth = 0.6;
   final hourWidth = rect.width / 24;
   // Vertikal: Stunden
   for (int h = 0; h <= 24; h++) {
@@ -535,7 +602,7 @@ void _drawGrid(Canvas canvas, Rect rect, ColorScheme cs, TextTheme textTheme, do
     final tp = TextPainter(
       text: TextSpan(
         text: m.toString(),
-        style: textTheme.bodySmall?.copyWith(color: cs.onSurface.withOpacity(0.7)),
+        style: textTheme.bodySmall?.copyWith(color: Colors.black.withOpacity(0.7)),
       ),
       textDirection: TextDirection.ltr,
     )..layout();
@@ -543,15 +610,17 @@ void _drawGrid(Canvas canvas, Rect rect, ColorScheme cs, TextTheme textTheme, do
   }
 }
 
-void _drawXAxis(Canvas canvas, Rect rect, ColorScheme cs, TextTheme textTheme) {
-  final textStyle = textTheme.bodySmall?.copyWith(color: cs.onSurface.withOpacity(0.7));
+void _drawXAxis(Canvas canvas, Rect rect, TextTheme textTheme) {
+  final textStyle = textTheme.bodySmall?.copyWith(color: Colors.black.withOpacity(0.7));
   final tp = TextPainter(textDirection: TextDirection.ltr);
   final hourWidth = rect.width / 24;
-  for (int h = 2; h <= 24; h += 2) {
+  final labelShift = (hourWidth * 0.25).clamp(3.0, 8.0).toDouble();
+  for (int h = 0; h < 24; h += 2) {
     final text = TextSpan(text: h.toString(), style: textStyle);
     tp.text = text;
     tp.layout();
-    final x = rect.left + h * hourWidth - tp.width / 2 - 6;
+    final shift = h == 0 ? labelShift * 2.35 : labelShift * 1.6;
+    final x = rect.left + h * hourWidth - tp.width / 2 + shift;
     final y = rect.bottom + 2;
     tp.paint(canvas, Offset(x, y));
   }
@@ -579,29 +648,27 @@ void _drawInterval(Canvas canvas, Rect rect, _Interval interval, Color color) {
 List<_Interval> _buildIntervals(List<ActivityRow> entries) {
   final parsed = entries
       .map((e) {
-        final dt = _parseActivityTime(e.time);
-        return dt == null ? null : _IntervalStart(dt, e.activity ?? '', e.role ?? '');
+        final minutes = _activityMinutes(e);
+        if (minutes == null) return null;
+        return _IntervalStart(minutes, e.activity ?? '', e.workType);
       })
       .whereType<_IntervalStart>()
       .toList()
-    ..sort((a, b) => a.time.compareTo(b.time));
+    ..sort((a, b) => a.minutes.compareTo(b.minutes));
   if (parsed.isEmpty) return [];
-  final baseMidnight = DateTime(parsed.first.time.year, parsed.first.time.month, parsed.first.time.day);
-  double minutesFromBase(DateTime t) => t.difference(baseMidnight).inMilliseconds / 60000.0;
 
   final result = <_Interval>[];
   for (var i = 0; i < parsed.length; i++) {
     final start = parsed[i];
-    final end = i + 1 < parsed.length ? parsed[i + 1].time : baseMidnight.add(const Duration(hours: 24));
-    final startMinutes = minutesFromBase(start.time).clamp(0.0, 24 * 60.0);
-    double endMinutes = minutesFromBase(end);
-    if (endMinutes < startMinutes) endMinutes = startMinutes;
-    if (endMinutes > 24 * 60) endMinutes = 24 * 60.0;
+    final nextMinutes = i + 1 < parsed.length ? parsed[i + 1].minutes : 24 * 60;
+    final startMinutes = start.minutes.clamp(0, 24 * 60).toDouble();
+    final endMinutes = nextMinutes.clamp(start.minutes, 24 * 60).toDouble();
+    if (endMinutes <= startMinutes) continue;
     result.add(_Interval(
-      startMinutes: startMinutes.toDouble(),
-      endMinutes: endMinutes.toDouble(),
+      startMinutes: startMinutes,
+      endMinutes: endMinutes,
       activity: start.activity,
-      role: start.role,
+      workType: start.workType,
     ));
   }
   return result;
@@ -717,19 +784,118 @@ String? _formatDate(String? raw) {
   return '$day.$month.$year';
 }
 
-Color _activityColor(String name) {
-  final l = name.toLowerCase();
+Color _workTypeColor(int? workType, String? fallbackLabel) {
+  if (workType != null) {
+    return switch (workType) {
+      0 => Colors.blue,
+      1 => Colors.yellow,
+      2 => Colors.purple,
+      3 => Colors.red,
+      _ => Colors.grey,
+    };
+  }
+  final l = fallbackLabel?.toLowerCase() ?? '';
   if (l.contains('ruhe')) return Colors.blue;
-  if (l.contains('bereit')) return Colors.yellow.shade700;
-  if (l.contains('arbeit') || l.contains('work') || l.contains('fahr')) return Colors.redAccent;
+  if (l.contains('bereit')) return Colors.yellow;
+  if (l.contains('arbeit') || l.contains('work')) return Colors.purple;
+  if (l.contains('fahr')) return Colors.red;
   return Colors.grey;
 }
 
-Color _roleColor(String name) {
-  final l = name.toLowerCase();
-  if (l.contains('fahrer') && !l.contains('bei')) return Colors.purpleAccent;
-  if (l.contains('bei')) return Colors.green;
-  return Colors.purpleAccent.withOpacity(0.2);
+int? _activityMinutes(ActivityRow entry) {
+  final minutes = entry.minutes;
+  if (minutes != null) return minutes;
+  final dt = _parseActivityTime(entry.time);
+  if (dt != null) return dt.hour * 60 + dt.minute;
+  return null;
+}
+
+List<String> _buildCardTimeline(List<CardRow> cards) {
+  final items = <_CardInterval>[];
+  final seen = <String>{};
+  for (final card in cards) {
+    final start = _parseActivityTime(card.insertion);
+    final end = _parseActivityTime(card.withdrawal);
+    if (start == null && end == null) continue;
+    final key = [
+      card.number ?? '',
+      card.insertion ?? '',
+      card.withdrawal ?? '',
+    ].join('|');
+    if (!seen.add(key)) continue;
+    items.add(
+      _CardInterval(
+        label: _cardLabel(card),
+        start: start,
+        end: end,
+      ),
+    );
+  }
+
+  items.sort((a, b) {
+    final aStart = a.start;
+    final bStart = b.start;
+    if (aStart == null && bStart == null) return 0;
+    if (aStart == null) return 1;
+    if (bStart == null) return -1;
+    return aStart.compareTo(bStart);
+  });
+
+  return items
+      .map((i) => '${i.label} von ${_clockLabel(i.start)} bis ${_clockLabel(i.end)}')
+      .toList();
+}
+
+String _cardLabel(CardRow card) {
+  final first = card.firstName?.trim();
+  final last = card.lastName?.trim();
+  if (first != null && first.isNotEmpty && last != null && last.isNotEmpty) {
+    return '${first[0].toUpperCase()}. $last';
+  }
+  if (last != null && last.isNotEmpty) return last;
+  final number = card.number?.trim();
+  if (number != null && number.isNotEmpty) return number;
+  return 'Unbekannt';
+}
+
+String _clockLabel(DateTime? time) {
+  if (time == null) return '–';
+  return '${_two(time.hour)}:${_two(time.minute)}';
+}
+
+String _two(int v) => v.toString().padLeft(2, '0');
+
+class _CardInterval {
+  _CardInterval({required this.label, required this.start, required this.end});
+  final String label;
+  final DateTime? start;
+  final DateTime? end;
+}
+
+class _IntervalStart {
+  _IntervalStart(this.minutes, this.activity, this.workType);
+  final int minutes;
+  final String activity;
+  final int? workType;
+}
+
+class _Interval {
+  _Interval({
+    required this.startMinutes,
+    required this.endMinutes,
+    required this.activity,
+    required this.workType,
+  });
+  final double startMinutes;
+  final double endMinutes;
+  final String activity;
+  final int? workType;
+}
+
+bool _isCoDriverRole(String? role) {
+  final l = role?.toLowerCase();
+  if (l == null || l.isEmpty) return false;
+  return l.contains('bei') || l.contains('co');
 }
 
 String? _dateOnly(String? raw) {
@@ -753,25 +919,6 @@ String? _drivenKm(String? start, String? end) {
   return diff.toStringAsFixed(0);
 }
 
-class _IntervalStart {
-  _IntervalStart(this.time, this.activity, this.role);
-  final DateTime time;
-  final String activity;
-  final String role;
-}
-
-class _Interval {
-  _Interval({
-    required this.startMinutes,
-    required this.endMinutes,
-    required this.activity,
-    required this.role,
-  });
-  final double startMinutes;
-  final double endMinutes;
-  final String activity;
-  final String role;
-}
 class _Section extends StatefulWidget {
   const _Section({
     required this.title,
@@ -779,6 +926,7 @@ class _Section extends StatefulWidget {
     required this.child,
     this.collapsible = true,
     this.preview,
+    this.tapToToggle = false,
   });
 
   final String title;
@@ -786,6 +934,7 @@ class _Section extends StatefulWidget {
   final Widget child;
   final bool collapsible;
   final Widget? preview;
+  final bool tapToToggle;
 
   @override
   State<_Section> createState() => _SectionState();
@@ -798,32 +947,47 @@ class _SectionState extends State<_Section> {
   Widget build(BuildContext context) {
     final text = Theme.of(context).textTheme;
     final title = widget.title;
+    final showHeaderToggle =
+        widget.collapsible && (!widget.tapToToggle || widget.preview == null);
+    Widget wrapToggle(Widget child) {
+      if (!widget.collapsible || !widget.tapToToggle || _expanded) return child;
+      return GestureDetector(
+        behavior: HitTestBehavior.translucent,
+        onTap: () => setState(() => _expanded = !_expanded),
+        child: child,
+      );
+    }
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        if (widget.collapsible)
-        Material(
-          color: Colors.transparent,
-          child: InkWell(
-            borderRadius: BorderRadius.circular(12),
-            onTap: () => setState(() => _expanded = !_expanded),
-            child: Padding(
-              padding: const EdgeInsets.symmetric(vertical: 8.0, horizontal: 6),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      if (title.isNotEmpty) Text(title, style: text.titleMedium),
-                      Icon(_expanded ? Icons.expand_less : Icons.expand_more),
-                    ],
-                  ),
-                ],
+        if (showHeaderToggle)
+          Material(
+            color: Colors.transparent,
+            child: InkWell(
+              borderRadius: BorderRadius.circular(12),
+              onTap: () => setState(() => _expanded = !_expanded),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(vertical: 8.0, horizontal: 6),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        if (title.isNotEmpty) Text(title, style: text.titleMedium),
+                        Icon(_expanded ? Icons.expand_less : Icons.expand_more),
+                      ],
+                    ),
+                  ],
+                ),
               ),
             ),
           ),
-        ),
+        if (widget.collapsible && !showHeaderToggle && title.isNotEmpty)
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 8.0, horizontal: 6),
+            child: Text(title, style: text.titleMedium),
+          ),
         if (!widget.collapsible && title.isNotEmpty)
           Padding(
             padding: const EdgeInsets.symmetric(vertical: 8.0),
@@ -831,17 +995,19 @@ class _SectionState extends State<_Section> {
           ),
         if (!widget.collapsible || _expanded) ...[
           if (widget.isEmpty)
-            Text('Keine Daten vorhanden.', style: text.bodyMedium)
+            wrapToggle(Text('Keine Daten vorhanden.', style: text.bodyMedium))
           else
-            widget.child,
+            wrapToggle(widget.child),
         ] else ...[
           if (widget.preview != null) ...[
-            widget.preview!,
-            const SizedBox(height: 8),
-            Align(
-              alignment: Alignment.centerLeft,
-              child: Icon(_expanded ? Icons.expand_less : Icons.expand_more, size: 18),
-            ),
+            wrapToggle(widget.preview!),
+            if (!widget.tapToToggle) ...[
+              const SizedBox(height: 8),
+              Align(
+                alignment: Alignment.centerLeft,
+                child: Icon(_expanded ? Icons.expand_less : Icons.expand_more, size: 18),
+              ),
+            ],
           ],
         ],
       ],

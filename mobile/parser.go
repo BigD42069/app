@@ -2,12 +2,15 @@ package mobile
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
 	"sync"
+	"time"
 
-	tachomobile "github.com/traconiq/tachoparser/pkg/mobile"
+	_ "github.com/company/tachograph/assets/pkg/certificates"
+	"github.com/traconiq/tachoparser/pkg/decoder"
 )
 
 const (
@@ -22,19 +25,12 @@ type Options struct {
 	StrictMode bool
 }
 
-type parserConfig struct {
-	pks1       string
-	pks2       string
-	strictMode bool
-}
-
 // Parser kapselt den Zugriff auf die Tachograph-Mobile-Bibliothek. Die
 // Instanz hält das aktuell initialisierte Service und sorgt dafür, dass
 // Zertifikatsoptionen nur bei Bedarf neu geladen werden.
 type Parser struct {
-	mu      sync.Mutex
-	service *tachomobile.Parser
-	cfg     parserConfig
+	mu     sync.Mutex
+	cancel context.CancelFunc
 }
 
 // NewParser erzeugt eine Parser-Instanz mit Standardeinstellungen. Die
@@ -77,69 +73,81 @@ func (p *Parser) ParseDdd(payload []byte, opts *ParseOptions) (*ParseResult, err
 		return nil, &NativeError{Code: ErrInvalidArguments, Message: "source must be 'card' or 'vu'"}
 	}
 
-	service, err := p.ensureService(opts)
-	if err != nil {
-		return nil, err
+	ctx, cancel := context.WithCancel(context.Background())
+	if opts.TimeoutMs > 0 {
+		ctx, cancel = context.WithTimeout(ctx, time.Duration(opts.TimeoutMs)*time.Millisecond)
 	}
 
-	timeout := opts.TimeoutMs
-	result, err := service.ParseWithTimeout(payload, mode, timeout)
-	if err != nil {
-		return nil, translateParseError(err)
+	p.mu.Lock()
+	if p.cancel != nil {
+		p.cancel()
 	}
+	p.cancel = cancel
+	p.mu.Unlock()
 
-	if result == nil {
-		return nil, &NativeError{Code: ErrParser, Message: "native parser returned no result"}
+	type parseOutcome struct {
+		json     string
+		verified bool
+		err      error
 	}
+	done := make(chan parseOutcome, 1)
 
-	return &ParseResult{
-		Status:   statusOk,
-		Json:     result.PayloadJSON,
-		Verified: result.Verified,
-	}, nil
+	go func() {
+		switch mode {
+		case "card":
+			var c decoder.Card
+			verified, err := decoder.UnmarshalTLV(payload, &c)
+			if err != nil {
+				done <- parseOutcome{err: err}
+				return
+			}
+			raw, err := json.Marshal(c)
+			done <- parseOutcome{json: string(raw), verified: verified, err: err}
+		case "vu":
+			var v decoder.Vu
+			verified, err := decoder.UnmarshalTV(payload, &v)
+			if err != nil {
+				done <- parseOutcome{err: err}
+				return
+			}
+			raw, err := json.Marshal(v)
+			done <- parseOutcome{json: string(raw), verified: verified, err: err}
+		default:
+			done <- parseOutcome{err: fmt.Errorf("unsupported mode %q", mode)}
+		}
+	}()
+
+	select {
+	case <-ctx.Done():
+		p.mu.Lock()
+		p.cancel = nil
+		p.mu.Unlock()
+		return nil, translateParseError(ctx.Err())
+	case outcome := <-done:
+		p.mu.Lock()
+		p.cancel = nil
+		p.mu.Unlock()
+		if outcome.err != nil {
+			return nil, translateParseError(outcome.err)
+		}
+		return &ParseResult{
+			Status:   statusOk,
+			Json:     outcome.json,
+			Verified: outcome.verified,
+		}, nil
+	}
 }
 
 // CancelActiveParse bricht laufende Parser-Jobs ab.
 func (p *Parser) CancelActiveParse() {
 	p.mu.Lock()
-	service := p.service
+	cancel := p.cancel
+	p.cancel = nil
 	p.mu.Unlock()
 
-	if service != nil {
-		service.CancelActiveParse()
+	if cancel != nil {
+		cancel()
 	}
-}
-
-func (p *Parser) ensureService(opts *ParseOptions) (*tachomobile.Parser, error) {
-	desired := parserConfig{
-		pks1:       opts.PKS1Dir,
-		pks2:       opts.PKS2Dir,
-		strictMode: opts.StrictMode,
-	}
-
-	p.mu.Lock()
-	defer p.mu.Unlock()
-
-	if p.service != nil && p.cfg == desired {
-		return p.service, nil
-	}
-
-	if p.service != nil {
-		p.service.CancelActiveParse()
-	}
-
-	service, err := tachomobile.NewParser(tachomobile.Options{
-		PKS1Dir:    desired.pks1,
-		PKS2Dir:    desired.pks2,
-		StrictMode: desired.strictMode,
-	})
-	if err != nil {
-		return nil, &NativeError{Code: ErrParser, Message: fmt.Sprintf("failed to initialise native parser: %v", err)}
-	}
-
-	p.service = service
-	p.cfg = desired
-	return service, nil
 }
 
 func translateParseError(err error) error {

@@ -7,3 +7,5 @@
 #if __has_include(<Mobile/Mobile.objc.h>)
 #import <Mobile/Mobile.objc.h>
 #endif
+
+#import "MobileParserFactory.h"

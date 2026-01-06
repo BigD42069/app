@@ -11,6 +11,7 @@ class DayActivity {
     this.places = const [],
     this.gnss = const [],
     this.loads = const [],
+    this.borderCrossings = const [],
   });
 
   final DateTime date;
@@ -21,6 +22,7 @@ class DayActivity {
   final List<PlaceRow> places;
   final List<GnssRow> gnss;
   final List<LoadRow> loads;
+  final List<BorderCrossingRow> borderCrossings;
 }
 
 class CardRow {
@@ -60,17 +62,23 @@ class CardRow {
 class ActivityRow {
   ActivityRow({
     this.time,
+    this.minutes,
     this.cardPresent,
     this.team,
     this.role,
     this.activity,
+    this.isCoDriver,
+    this.workType,
   });
 
   final String? time;
+  final int? minutes;
   final String? cardPresent;
   final String? team;
   final String? role;
   final String? activity;
+  final bool? isCoDriver;
+  final int? workType;
 }
 
 class PlaceRow {
@@ -143,6 +151,22 @@ class LoadRow {
   final String? lat;
   final String? lon;
   final String? odometer;
+}
+
+class BorderCrossingRow {
+  BorderCrossingRow({
+    this.time,
+    this.countryLeft,
+    this.countryEntered,
+    this.lat,
+    this.lon,
+  });
+
+  final String? time;
+  final String? countryLeft;
+  final String? countryEntered;
+  final String? lat;
+  final String? lon;
 }
 
 /// Global Store für Kalendereinträge und ihre Inhalte.
